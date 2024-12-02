@@ -1,0 +1,30 @@
+[package]
+name = "mstun"
+version = "0.1.0"
+edition = "2021"
+authors = ["Mikhail Vasilyev"]
+description = "STUN implementation in Rust"
+repository = "https://github.com/DanglingPointer/mstun"
+license = "Apache-2.0"
+
+[dependencies]
+bitvec = { version = "1.0.1", default-features = false, features = ["alloc"] }
+bytes = "1.9.0"
+log = "0.4.22"
+thiserror = "2.0.3"
+tokio = { version = "1.41.1", default-features = false, features = [
+    "net",
+    "sync",
+    "io-util",
+    "macros",
+] }
+
+[dev-dependencies]
+simple_logger = { version = "5.0.0" }
+tokio-test = "0.4.4"
+local_async_utils = { git = "https://github.com/DanglingPointer/local_async_utils.git", tag = "v0.1.0", features = [
+    "tokio-time",
+] }
+
+[profile.dev]
+opt-level = 3
