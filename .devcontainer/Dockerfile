@@ -1,6 +1,8 @@
-FROM rust:1.82.0
+FROM rust:latest
 
-RUN rustup component add clippy rustfmt
+RUN rustup default stable
+
+RUN rustup component add clippy rustfmt rust-src
 
 # install nextest
 RUN curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
