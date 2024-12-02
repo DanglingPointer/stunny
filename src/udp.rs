@@ -1,5 +1,6 @@
 use crate::error::Error;
 use crate::msgs::*;
+use crate::transactions::MessageChannels;
 use bytes::{Buf, BufMut};
 use std::future::Future;
 use std::io;
@@ -11,11 +12,6 @@ use tokio::io::ReadBuf;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::try_join;
-
-pub struct MessageChannels(
-    pub mpsc::Sender<(Message, SocketAddr)>,
-    pub mpsc::Receiver<(Message, SocketAddr)>,
-);
 
 pub fn setup_udp(socket: UdpSocket, max_outstanding_requests: usize) -> (MessageChannels, Runner) {
     let (ingress_sender, ingress_receiver) = mpsc::channel(max_outstanding_requests);
@@ -258,32 +254,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn receive_single_message() {
-        let sender_port = 6666u16;
-        let receiver_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 7777);
-
-        let sender_sock = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, sender_port))
-            .await
-            .unwrap();
-
-        let socket = create_ipv4_socket(receiver_addr.port()).await.unwrap();
-        let (MessageChannels(_tx_channel, mut rx_channel), runner) = setup_udp(socket, 10);
-        task::spawn(runner.run());
-
-        sender_sock
-            .send_to(&BIND_RESPONSE_BYTES, receiver_addr)
-            .await
-            .unwrap();
-        let (receved_msg, src_addr) = timeout(sec!(5), rx_channel.recv()).await.unwrap().unwrap();
-        assert_eq!(
-            src_addr,
-            SocketAddr::new(Ipv4Addr::LOCALHOST.into(), sender_port)
-        );
-        assert_eq!(receved_msg, bind_response_msg());
-    }
-
-    #[tokio::test]
-    async fn receive_multiple_messages() {
+    async fn receive_messages() {
         let sender_port = 7784u16;
         let receiver_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 7785);
 
@@ -359,32 +330,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_single_message() {
-        let sender_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 6669);
-        let receiver_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 7780);
-
-        let receiver_sock = UdpSocket::bind(receiver_addr).await.unwrap();
-
-        let socket = create_ipv4_socket(sender_addr.port()).await.unwrap();
-        let (MessageChannels(tx_channel, _rx_channel), runner) = setup_udp(socket, 10);
-        task::spawn(runner.run());
-
-        tx_channel
-            .send((bind_request_msg(), receiver_addr.into()))
-            .await
-            .unwrap();
-
-        let mut buf = [0u8; 1500];
-        let (len, src_addr) = timeout(sec!(5), receiver_sock.recv_from(&mut buf))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(src_addr, sender_addr.into());
-        assert_eq!(&buf[..len], &BIND_REQUEST_BYTES);
-    }
-
-    #[tokio::test]
-    async fn send_multiple_messages() {
+    async fn send_messages() {
         let sender_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 7786);
         let receiver_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 7787);
 
