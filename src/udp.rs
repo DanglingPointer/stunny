@@ -65,7 +65,7 @@ struct Egress<'s> {
     source: mpsc::Receiver<(Message, SocketAddr)>,
 }
 
-impl<'s> Future for Ingress<'s> {
+impl Future for Ingress<'_> {
     type Output = io::Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -114,7 +114,7 @@ impl<'s> Future for Ingress<'s> {
     }
 }
 
-impl<'s> Future for Egress<'s> {
+impl Future for Egress<'_> {
     type Output = io::Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
