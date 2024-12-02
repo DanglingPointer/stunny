@@ -1,0 +1,87 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "cargo",
+			"command": "update",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"label": "rust: cargo update",
+			"runOptions": {
+				"runOn": "folderOpen"
+			}
+		},
+		{
+			"type": "cargo",
+			"command": "build",
+			"args": [
+				"--release",
+				"--all-targets",
+				"--all-features",
+				"--verbose"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"label": "rust: cargo build"
+		},
+		{
+			"type": "cargo",
+			"command": "nextest",
+			"args": [
+				"run",
+				"--all-targets",
+				"--all-features",
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": {
+				"kind": "test",
+				"isDefault": true
+			},
+			"label": "rust: cargo nextest"
+		},
+		{
+			"type": "cargo",
+			"command": "nextest",
+			"args": [
+				"run",
+				"${input:testName}",
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "test",
+			"label": "rust: run single test"
+		},
+		{
+			"type": "cargo",
+			"command": "clippy",
+			"args": [
+				"--all-targets",
+				"--all-features",
+				"--",
+				"-Dwarnings",
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "none",
+			"label": "rust: cargo clippy"
+		}
+	],
+	"inputs": [
+		{
+			"id": "testName",
+			"type": "promptString",
+			"default": "${selectedText}",
+			"description": "Test name"
+		}
+	]
+}
