@@ -31,12 +31,24 @@ pub struct Tlv {
     pub value: Vec<u8>,
 }
 
+pub(crate) trait EncodeDecode: Sized {
+    fn decode_from<B: Buf>(buffer: &mut B) -> Result<Self, Error>;
+
+    fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), Error>;
+}
+
 const MAGIC_COOKIE: u32 = 0x2112A442;
 
 impl Header {
     pub const LENGTH: usize = 20;
+}
 
-    pub fn decode_from<B: Buf>(buffer: &mut B) -> Result<Self, Error> {
+impl Tlv {
+    pub const MIN_LENGTH: usize = 4;
+}
+
+impl EncodeDecode for Header {
+    fn decode_from<B: Buf>(buffer: &mut B) -> Result<Self, Error> {
         if buffer.remaining() < Self::LENGTH {
             return Err(Error::Parse("incorrect header length".into()));
         }
@@ -89,7 +101,7 @@ impl Header {
         Ok(ret)
     }
 
-    pub fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<usize, Error> {
+    fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), Error> {
         if buffer.remaining_mut() < Self::LENGTH {
             return Err(Error::Io(io::Error::new(
                 io::ErrorKind::OutOfMemory,
@@ -111,14 +123,12 @@ impl Header {
         buffer.put_u32(MAGIC_COOKIE);
         buffer.put_slice(&self.transaction_id);
 
-        Ok(Self::LENGTH)
+        Ok(())
     }
 }
 
-impl Tlv {
-    pub const MIN_LENGTH: usize = 4;
-
-    pub fn decode_from<B: Buf>(buffer: &mut B) -> Result<Self, Error> {
+impl EncodeDecode for Tlv {
+    fn decode_from<B: Buf>(buffer: &mut B) -> Result<Self, Error> {
         if buffer.remaining() < Self::MIN_LENGTH {
             return Err(Error::Parse("no TLV type and length".into()));
         }
@@ -141,7 +151,7 @@ impl Tlv {
         })
     }
 
-    pub fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), Error> {
+    fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), Error> {
         let real_value_len = (self.value.len() + 3) & !0x3;
 
         if buffer.remaining_mut() < 4 + real_value_len {

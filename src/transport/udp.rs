@@ -1,6 +1,6 @@
+use super::MessageChannels;
 use crate::error::Error;
-use crate::msgs::*;
-use crate::transactions::MessageChannels;
+use crate::message::*;
 use bytes::{Buf, BufMut};
 use std::future::Future;
 use std::io;
@@ -16,12 +16,17 @@ use tokio::try_join;
 pub fn setup_udp(socket: UdpSocket, max_outstanding_requests: usize) -> (MessageChannels, Runner) {
     let (ingress_sender, ingress_receiver) = mpsc::channel(max_outstanding_requests);
     let (egress_sender, egress_receiver) = mpsc::channel(max_outstanding_requests);
-    let runner = Runner {
-        socket,
-        ingress_sender,
-        egress_receiver,
-    };
-    (MessageChannels(egress_sender, ingress_receiver), runner)
+    (
+        MessageChannels {
+            egress_sink: egress_sender,
+            ingress_source: ingress_receiver,
+        },
+        Runner {
+            socket,
+            ingress_sender,
+            egress_receiver,
+        },
+    )
 }
 
 pub struct Runner {
@@ -148,20 +153,20 @@ impl Future for Egress<'_> {
                     },
                 },
                 Some(dest_addr) => {
+                    let dest_addr = *dest_addr;
                     let data_len = buffer.len();
-                    let send_result = ready!(socket.poll_send_to(cx, &buffer[..], *dest_addr));
+                    let send_result = ready!(socket.poll_send_to(cx, &buffer[..], dest_addr));
                     *pending_recipient = None;
                     buffer.clear();
 
                     match send_result {
-                        Err(e) => return Poll::Ready(Err(e)),
-                        Ok(bytes_sent) if bytes_sent != data_len => {
-                            return Poll::Ready(Err(io::Error::new(
-                                io::ErrorKind::UnexpectedEof,
-                                format!("Failed to send all bytes ({}/{})", bytes_sent, data_len),
-                            )))
+                        Err(e) => {
+                            log::error!("Failed to send message to {dest_addr}: {e}");
                         }
-                        Ok(_) => continue,
+                        Ok(bytes_sent) if bytes_sent != data_len => {
+                            log::error!("Sent only {bytes_sent}/{data_len} to {dest_addr}");
+                        }
+                        Ok(_) => (),
                     }
                 }
             }
@@ -263,7 +268,13 @@ mod tests {
             .unwrap();
 
         let socket = create_ipv4_socket(receiver_addr.port()).await.unwrap();
-        let (MessageChannels(_tx_channel, mut rx_channel), runner) = setup_udp(socket, 10);
+        let (
+            MessageChannels {
+                egress_sink: _tx_channel,
+                ingress_source: mut rx_channel,
+            },
+            runner,
+        ) = setup_udp(socket, 10);
         task::spawn(runner.run());
 
         sender_sock
@@ -308,7 +319,13 @@ mod tests {
             .unwrap();
 
         let socket = create_ipv4_socket(receiver_addr.port()).await.unwrap();
-        let (MessageChannels(_tx_channel, mut rx_channel), runner) = setup_udp(socket, 10);
+        let (
+            MessageChannels {
+                egress_sink: _tx_channel,
+                ingress_source: mut rx_channel,
+            },
+            runner,
+        ) = setup_udp(socket, 10);
         task::spawn(runner.run());
 
         bad_sender
@@ -337,7 +354,13 @@ mod tests {
         let receiver_sock = UdpSocket::bind(receiver_addr).await.unwrap();
 
         let socket = create_ipv4_socket(sender_addr.port()).await.unwrap();
-        let (MessageChannels(tx_channel, _rx_channel), runner) = setup_udp(socket, 10);
+        let (
+            MessageChannels {
+                egress_sink: tx_channel,
+                ingress_source: _rx_channel,
+            },
+            runner,
+        ) = setup_udp(socket, 10);
         task::spawn(runner.run());
 
         tx_channel
@@ -376,7 +399,13 @@ mod tests {
         let receiver_sock = UdpSocket::bind(receiver_addr).await.unwrap();
 
         let socket = create_ipv4_socket(sender_addr.port()).await.unwrap();
-        let (MessageChannels(tx_channel, _rx_channel), runner) = setup_udp(socket, 10);
+        let (
+            MessageChannels {
+                egress_sink: tx_channel,
+                ingress_source: _rx_channel,
+            },
+            runner,
+        ) = setup_udp(socket, 10);
         task::spawn(runner.run());
 
         // send a message to nowhere
@@ -416,7 +445,13 @@ mod tests {
         let socket = create_ipv4_socket(receiver_addr.port()).await.unwrap();
 
         // given: channel with capacity 1
-        let (MessageChannels(_tx_channel, mut rx_channel), runner) = setup_udp(socket, 1);
+        let (
+            MessageChannels {
+                egress_sink: _tx_channel,
+                ingress_source: mut rx_channel,
+            },
+            runner,
+        ) = setup_udp(socket, 1);
         task::spawn(runner.run());
 
         // when: 2 messages are sent to us
