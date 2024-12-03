@@ -71,8 +71,7 @@ impl Future for Ingress<'_> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         fn decode_msg(mut buffer: &[u8]) -> Result<Message, Error> {
-            let buffer = &mut buffer;
-            let header = Header::decode_from(buffer)?;
+            let header = Header::decode_from(&mut buffer)?;
             let mut buffer = Buf::take(buffer, header.length as usize);
             let mut attributes = Vec::new();
             while buffer.has_remaining() {
@@ -106,7 +105,7 @@ impl Future for Ingress<'_> {
                     )));
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => {
-                    log::error!("Dropping message from {src_addr}: channel is full");
+                    log::error!("Dropping message from {src_addr}: rx channel is full");
                     continue;
                 }
                 Ok(()) => continue,
@@ -176,83 +175,11 @@ impl Future for Egress<'_> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::testutils::*;
     use super::*;
     use local_async_utils::sec;
     use std::net::{Ipv4Addr, SocketAddrV4};
     use tokio::{task, time::timeout};
-
-    #[rustfmt::skip]
-    const BIND_REQUEST_BYTES: [u8; 28] = [
-        0x00, 0x01, 0x00, 0x08,
-        0x21, 0x12, 0xA4, 0x42,
-        0xaa, 0xaa, 0xaa, 0xaa,
-        0xaa, 0xaa, 0xaa, 0xaa,
-        0xaa, 0xaa, 0xaa, 0xaa,
-        0x80, 0x22, 0x00, 0x03,
-        b'U', b'g', b'h', 0x00,
-    ];
-
-    #[rustfmt::skip]
-    const BIND_RESPONSE_BYTES: [u8; 28] = [
-        0x01, 0x01, 0x00, 0x08,
-        0x21, 0x12, 0xA4, 0x42,
-        0xbb, 0xbb, 0xbb, 0xbb,
-        0xbb, 0xbb, 0xbb, 0xbb,
-        0xbb, 0xbb, 0xbb, 0xbb,
-        0x80, 0x22, 0x00, 0x04,
-        b'U', b'g', b'h', b'!',
-    ];
-
-    #[rustfmt::skip]
-    const BIND_INDICATION_BYTES: [u8; 20] = [
-        0x00, 0x11, 0x00, 0x00,
-        0x21, 0x12, 0xA4, 0x42,
-        0xcc, 0xcc, 0xcc, 0xcc,
-        0xcc, 0xcc, 0xcc, 0xcc,
-        0xcc, 0xcc, 0xcc, 0xcc,
-    ];
-
-    fn bind_request_msg() -> Message {
-        Message {
-            header: Header {
-                method: 0b000000000001,
-                class: Class::Request,
-                transaction_id: [0xaa; 12],
-                length: 8,
-            },
-            attributes: vec![Tlv {
-                attribute_type: 0x8022,
-                value: b"Ugh".to_vec(),
-            }],
-        }
-    }
-
-    fn bind_response_msg() -> Message {
-        Message {
-            header: Header {
-                method: 0b000000000001,
-                class: Class::Response,
-                transaction_id: [0xbb; 12],
-                length: 8,
-            },
-            attributes: vec![Tlv {
-                attribute_type: 0x8022,
-                value: b"Ugh!".to_vec(),
-            }],
-        }
-    }
-
-    fn bind_indication_msg() -> Message {
-        Message {
-            header: Header {
-                method: 0b000000000001,
-                class: Class::Indication,
-                transaction_id: [0xcc; 12],
-                length: 0,
-            },
-            attributes: Vec::new(),
-        }
-    }
 
     async fn create_ipv4_socket(port: u16) -> io::Result<UdpSocket> {
         UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port)).await

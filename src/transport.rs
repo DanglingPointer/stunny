@@ -2,7 +2,11 @@ use crate::message::Message;
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
 
+pub mod tcp;
 pub mod udp;
+
+#[cfg(test)]
+mod testutils;
 
 #[allow(dead_code)]
 pub struct MessageChannels {
