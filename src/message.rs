@@ -65,7 +65,7 @@ impl EncodeDecode for Header {
 
         let mut method_class_bits = BitArray::<u16, Lsb0>::from(method_class_bytes);
         if method_class_bits[14..].any() {
-            return Err(Error::Parse("incorrect prefix bits".into()));
+            return Err(Error::Parse("non-zero first bits".into()));
         }
         //
         //  0                 1
@@ -130,15 +130,22 @@ impl EncodeDecode for Header {
 impl EncodeDecode for Tlv {
     fn decode_from<B: Buf>(buffer: &mut B) -> Result<Self, Error> {
         if buffer.remaining() < Self::MIN_LENGTH {
-            return Err(Error::Parse("no TLV type and length".into()));
+            return Err(Error::Parse("buffer not long enough to read TLV".into()));
         }
 
         let attribute_type = buffer.get_u16();
         let value_len = buffer.get_u16() as usize;
         let real_value_len = (value_len + 3) & !0x3;
 
-        if real_value_len < buffer.remaining() {
-            return Err(Error::Parse("invalid TLV length".into()));
+        if buffer.remaining() < real_value_len {
+            return Err(Error::Parse(
+                format!(
+                    "TLV length exceeds buffer size ({} > {})",
+                    real_value_len,
+                    buffer.remaining()
+                )
+                .into(),
+            ));
         }
 
         let mut value = vec![0u8; value_len];
@@ -261,6 +268,26 @@ mod tests {
         };
         tlv.encode_into(&mut buffer).unwrap();
         assert_eq!(buffer, SOFTWARE_ATTRIBUTE);
+    }
+
+    #[test]
+    fn decode_multiple_attributes() {
+        #[rustfmt::skip]
+        let buffer = [
+            0x80, 0x22, 0x00, 0x03,
+            b'U', b'h', b'm', 0x00,
+            0x80, 0x22, 0x00, 0x04,
+            b'U', b'g', b'h', b'!',
+        ];
+        let mut buffer = &buffer[..];
+
+        let tlv = Tlv::decode_from(&mut buffer).unwrap();
+        assert_eq!(tlv.attribute_type, 0x8022);
+        assert_eq!(tlv.value, b"Uhm");
+
+        let tlv = Tlv::decode_from(&mut buffer).unwrap();
+        assert_eq!(tlv.attribute_type, 0x8022);
+        assert_eq!(tlv.value, b"Ugh!");
     }
 
     #[test]
