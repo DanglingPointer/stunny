@@ -1,10 +1,10 @@
 [package]
-name = "mstun"
+name = "stunny"
 version = "0.1.0"
 edition = "2021"
 authors = ["Mikhail Vasilyev"]
 description = "STUN implementation in Rust"
-repository = "https://github.com/DanglingPointer/mstun"
+repository = "https://github.com/DanglingPointer/stunny"
 license = "Apache-2.0"
 
 [dependencies]

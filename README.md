@@ -1,7 +1,7 @@
-[![CI](https://github.com/DanglingPointer/mstun/actions/workflows/ci.yml/badge.svg)](https://github.com/DanglingPointer/mstun/actions/workflows/ci.yml)
+[![CI](https://github.com/DanglingPointer/stunny/actions/workflows/ci.yml/badge.svg)](https://github.com/DanglingPointer/stunny/actions/workflows/ci.yml)
 
-# mstun
-STUN library in Rust.
+# stunny
+Async implementation of the STUN protocol in Rust (Tokio-based).
 
 ### Specs
 - [RFC 8489 - STUN](https://datatracker.ietf.org/doc/html/rfc8489)

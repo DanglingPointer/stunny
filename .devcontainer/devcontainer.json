@@ -8,8 +8,8 @@
 		// Update the 'dockerFile' property if you aren't using the standard 'Dockerfile' filename.
 		"dockerfile": "Dockerfile"
 	},
-	"workspaceMount": "source=${localWorkspaceFolder},target=/usr/src/mstun,type=bind",
-	"workspaceFolder": "/usr/src/mstun",
+	"workspaceMount": "source=${localWorkspaceFolder},target=/usr/src/stunny,type=bind",
+	"workspaceFolder": "/usr/src/stunny",
 	"remoteUser": "builder", // unnecessary if we set USER in Dockerfile
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// "features": {},
