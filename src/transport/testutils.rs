@@ -80,3 +80,9 @@ pub(super) fn bind_indication_msg() -> Message {
         attributes: Vec::new(),
     }
 }
+
+macro_rules! local_test {
+    ($($arg:tt)+) => {{
+        task::LocalSet::new().run_until(time::timeout(Duration::from_secs(5), async $($arg)+)).await.expect("test timeout");
+    }}
+}

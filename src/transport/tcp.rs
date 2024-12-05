@@ -75,26 +75,20 @@ impl<F: TcpSocketFactory> ConnectionPool<F> {
     pub async fn run(mut self) {
         while let Some((message, remote_addr)) = self.egress_source.recv().await {
             if let Entry::Occupied(occupied_entry) = self.connections.entry(remote_addr) {
-                // check if the channel is closed in advance, to avoid copying message
-                if occupied_entry.get().is_closed() {
-                    occupied_entry.remove();
-                    log::info!("Reconnecting to {remote_addr}");
-                } else {
-                    match occupied_entry.get().try_send(message) {
-                        Ok(_) => {
-                            continue;
-                        }
-                        Err(mpsc::error::TrySendError::Full(_)) => {
-                            log::error!("Dropping message to {remote_addr}: tx channel is full");
-                            continue;
-                        }
-                        Err(mpsc::error::TrySendError::Closed(_)) => {
-                            // connection runs on the same thread, so the channel couldn't get dropped
-                            // between the call to `is_closed()` and `try_send()`
-                            unreachable!();
-                        }
+                match occupied_entry.get().try_reserve() {
+                    Ok(sender) => {
+                        sender.send(message);
+                        continue;
+                    }
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        log::error!("Dropping message to {remote_addr}: tx channel is full");
+                        continue;
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        log::info!("Reconnecting to {remote_addr}");
                     }
                 }
+                occupied_entry.remove();
             }
             // if we ended up here, we need to create a new connection
             match self.launch_new_connection(remote_addr) {
@@ -116,7 +110,6 @@ impl<F: TcpSocketFactory> ConnectionPool<F> {
         let (egress_sender, egress_receiver) = mpsc::channel(self.config.max_outstanding_requests);
         let ingress_sink = self.ingress_sink.clone();
         let inactivity_timeout = self.config.connection_keep_alive;
-        // we MUST use local task here, because of the is_closed() check in ConnectionPool::run()
         task::spawn_local(async move {
             run_connection(
                 socket,
@@ -249,12 +242,6 @@ mod tests {
             socket.set_reuseport(true)?;
             Ok(socket)
         }
-    }
-
-    macro_rules! local_test {
-        ($($arg:tt)+) => {{
-            task::LocalSet::new().run_until(time::timeout(Duration::from_secs(5), async $($arg)+)).await.expect("test timeout");
-        }}
     }
 
     fn local_addr(port: u16) -> SocketAddr {
@@ -452,7 +439,6 @@ mod tests {
             .with_level(log::LevelFilter::Trace)
             .init();
         local_test!({
-            // given: a channel with a single slot
             let (mut channels, pool) = setup_tcp(Config {
                 max_outstanding_requests: 1,
                 connection_keep_alive: Duration::from_secs(1),
