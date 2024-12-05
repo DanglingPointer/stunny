@@ -39,12 +39,12 @@ impl Runner {
     pub async fn run(self) -> io::Result<()> {
         let ingress = Ingress {
             socket: &self.socket,
-            buffer: [MaybeUninit::uninit(); 1500],
+            buffer: [MaybeUninit::uninit(); BUFFER_LEN],
             sink: self.ingress_sender,
         };
         let egress = Egress {
             socket: &self.socket,
-            buffer: Vec::with_capacity(1500),
+            buffer_pos: ([0u8; BUFFER_LEN], 0),
             pending_recipient: None,
             source: self.egress_receiver,
         };
@@ -53,15 +53,17 @@ impl Runner {
     }
 }
 
+const BUFFER_LEN: usize = 1500;
+
 struct Ingress<'s> {
     socket: &'s UdpSocket,
-    buffer: [MaybeUninit<u8>; 1500],
+    buffer: [MaybeUninit<u8>; BUFFER_LEN],
     sink: mpsc::Sender<(Message, SocketAddr)>,
 }
 
 struct Egress<'s> {
     socket: &'s UdpSocket,
-    buffer: Vec<u8>,
+    buffer_pos: ([u8; BUFFER_LEN], usize),
     pending_recipient: Option<SocketAddr>,
     source: mpsc::Receiver<(Message, SocketAddr)>,
 }
@@ -128,7 +130,7 @@ impl Future for Egress<'_> {
 
         let Egress {
             socket,
-            buffer,
+            buffer_pos: (buffer, pos),
             pending_recipient,
             source,
         } = self.get_mut();
@@ -141,22 +143,26 @@ impl Future for Egress<'_> {
                             "Channel closed",
                         )));
                     }
-                    Some((message, dest_addr)) => match encode_msg(&message, buffer) {
-                        Ok(_) => {
-                            *pending_recipient = Some(dest_addr);
+                    Some((message, dest_addr)) => {
+                        let mut remaining_buffer = buffer.as_mut_slice();
+                        match encode_msg(&message, &mut remaining_buffer) {
+                            Ok(_) => {
+                                *pos = BUFFER_LEN - remaining_buffer.len();
+                                *pending_recipient = Some(dest_addr);
+                            }
+                            Err(e) => {
+                                log::error!("Failed to encode message to {dest_addr}: {e}");
+                                *pos = 0;
+                            }
                         }
-                        Err(e) => {
-                            log::error!("Failed to encode message to {dest_addr}: {e}");
-                            buffer.clear();
-                        }
-                    },
+                    }
                 },
                 Some(dest_addr) => {
                     let dest_addr = *dest_addr;
-                    let data_len = buffer.len();
-                    let send_result = ready!(socket.poll_send_to(cx, &buffer[..], dest_addr));
+                    let data_len = *pos;
+                    let send_result = ready!(socket.poll_send_to(cx, &buffer[..*pos], dest_addr));
                     *pending_recipient = None;
-                    buffer.clear();
+                    *pos = 0;
 
                     match send_result {
                         Err(e) => {
