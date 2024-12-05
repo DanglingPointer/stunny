@@ -1,7 +1,24 @@
-use crate::error::Error;
 use bitvec::prelude::*;
 use bytes::{Buf, BufMut};
+use std::borrow::Cow;
 use std::io;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+#[error("failed to parse message ({0})")]
+pub struct ParseError(Cow<'static, str>);
+
+impl<T: Into<Cow<'static, str>>> From<T> for ParseError {
+    fn from(value: T) -> Self {
+        ParseError(value.into())
+    }
+}
+
+impl From<ParseError> for io::Error {
+    fn from(e: ParseError) -> Self {
+        io::Error::new(io::ErrorKind::InvalidData, Box::new(e))
+    }
+}
 
 #[derive(PartialEq, Eq, Debug)]
 pub struct Message {
@@ -32,9 +49,9 @@ pub struct Tlv {
 }
 
 pub(crate) trait EncodeDecode: Sized {
-    fn decode_from<B: Buf>(buffer: &mut B) -> Result<Self, Error>;
+    fn decode_from<B: Buf>(buffer: &mut B) -> Result<Self, ParseError>;
 
-    fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), Error>;
+    fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), io::Error>;
 }
 
 const MAGIC_COOKIE: u32 = 0x2112A442;
@@ -48,9 +65,9 @@ impl Tlv {
 }
 
 impl EncodeDecode for Header {
-    fn decode_from<B: Buf>(buffer: &mut B) -> Result<Self, Error> {
+    fn decode_from<B: Buf>(buffer: &mut B) -> Result<Self, ParseError> {
         if buffer.remaining() < Self::LENGTH {
-            return Err(Error::Parse("incorrect header length".into()));
+            return Err("incorrect header length".into());
         }
 
         let mut buffer = buffer.take(Self::LENGTH);
@@ -60,12 +77,12 @@ impl EncodeDecode for Header {
         let magic_cookie = buffer.get_u32();
 
         if magic_cookie != MAGIC_COOKIE {
-            return Err(Error::Parse("incorrect magic cookie".into()));
+            return Err("incorrect magic cookie".into());
         }
 
         let mut method_class_bits = BitArray::<u16, Lsb0>::from(method_class_bytes);
         if method_class_bits[14..].any() {
-            return Err(Error::Parse("non-zero first bits".into()));
+            return Err("non-zero first bits".into());
         }
         //
         //  0                 1
@@ -101,12 +118,12 @@ impl EncodeDecode for Header {
         Ok(ret)
     }
 
-    fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), Error> {
+    fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), io::Error> {
         if buffer.remaining_mut() < Self::LENGTH {
-            return Err(Error::Io(io::Error::new(
+            return Err(io::Error::new(
                 io::ErrorKind::OutOfMemory,
                 "not enough bytes to write header",
-            )));
+            ));
         }
 
         let method_bits = self.method.view_bits();
@@ -128,9 +145,9 @@ impl EncodeDecode for Header {
 }
 
 impl EncodeDecode for Tlv {
-    fn decode_from<B: Buf>(buffer: &mut B) -> Result<Self, Error> {
+    fn decode_from<B: Buf>(buffer: &mut B) -> Result<Self, ParseError> {
         if buffer.remaining() < Self::MIN_LENGTH {
-            return Err(Error::Parse("buffer not long enough to read TLV".into()));
+            return Err("buffer not long enough to read TLV".into());
         }
 
         let attribute_type = buffer.get_u16();
@@ -138,14 +155,12 @@ impl EncodeDecode for Tlv {
         let real_value_len = (value_len + 3) & !0x3;
 
         if buffer.remaining() < real_value_len {
-            return Err(Error::Parse(
-                format!(
-                    "TLV length exceeds buffer size ({} > {})",
-                    real_value_len,
-                    buffer.remaining()
-                )
-                .into(),
-            ));
+            return Err(format!(
+                "TLV length exceeds buffer size ({} > {})",
+                real_value_len,
+                buffer.remaining()
+            )
+            .into());
         }
 
         let mut value = vec![0u8; value_len];
@@ -158,14 +173,14 @@ impl EncodeDecode for Tlv {
         })
     }
 
-    fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), Error> {
+    fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), io::Error> {
         let real_value_len = (self.value.len() + 3) & !0x3;
 
         if buffer.remaining_mut() < 4 + real_value_len {
-            return Err(Error::Io(io::Error::new(
+            return Err(io::Error::new(
                 io::ErrorKind::OutOfMemory,
                 "not enough bytes to write TLV",
-            )));
+            ));
         }
 
         buffer.put_u16(self.attribute_type);
@@ -217,14 +232,14 @@ mod tests {
 
     #[test]
     fn encode_bind_request_header() {
-        let mut buffer = Vec::with_capacity(Header::LENGTH);
+        let mut buffer = [0u8; Header::LENGTH];
         let header = Header {
             method: 0b000000000001,
             class: Class::Request,
             transaction_id: [0xaa; 12],
             length: 12,
         };
-        header.encode_into(&mut buffer).unwrap();
+        header.encode_into(&mut buffer.as_mut_slice()).unwrap();
         assert_eq!(buffer, BIND_REQUEST_HEADER);
     }
 
@@ -240,14 +255,14 @@ mod tests {
 
     #[test]
     fn encode_bind_response_header() {
-        let mut buffer = Vec::with_capacity(Header::LENGTH);
+        let mut buffer = [0u8; Header::LENGTH];
         let header = Header {
             method: 0b000000000001,
             class: Class::Response,
             transaction_id: [0xbb; 12],
             length: 256,
         };
-        header.encode_into(&mut buffer).unwrap();
+        header.encode_into(&mut buffer.as_mut_slice()).unwrap();
         assert_eq!(buffer, BIND_RESPONSE_HEADER);
     }
 
@@ -261,7 +276,7 @@ mod tests {
 
     #[test]
     fn encode_software_attribute() {
-        let mut buffer = Vec::with_capacity(8);
+        let mut buffer = Vec::new();
         let tlv = Tlv {
             attribute_type: 0x8022,
             value: b"Ugh".to_vec(),
@@ -317,7 +332,7 @@ mod tests {
 
     #[test]
     fn encode_bind_response_with_software_attribute() {
-        let mut buffer = Vec::with_capacity(Header::LENGTH + 8);
+        let mut buffer = Vec::new();
         let header = Header {
             method: 0b000000000001,
             class: Class::Response,
