@@ -7,7 +7,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 #[error("failed to parse message ({0})")]
-pub(crate) struct ParseError(Cow<'static, str>);
+pub struct ParseError(Cow<'static, str>);
 
 impl<T: Into<Cow<'static, str>>> From<T> for ParseError {
     fn from(value: T) -> Self {
@@ -22,21 +22,21 @@ impl From<ParseError> for io::Error {
 }
 
 #[derive(PartialEq, Eq, Debug)]
-pub(crate) struct Message {
-    pub(crate) header: Header,
-    pub(crate) attributes: Vec<Tlv>,
+pub struct Message {
+    pub header: Header,
+    pub attributes: Vec<Tlv>,
 }
 
 #[derive(PartialEq, Eq, Debug)]
-pub(crate) struct Header {
-    pub(crate) method: u16,
-    pub(crate) class: Class,
-    pub(crate) transaction_id: [u8; 12],
-    pub(super) length: u16,
+pub struct Header {
+    pub method: u16,
+    pub class: Class,
+    pub transaction_id: [u8; 12],
+    pub length: u16,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub(crate) enum Class {
+pub enum Class {
     Request,
     Response,
     Error,
@@ -57,7 +57,7 @@ macro_rules! ceil_mul_4 {
 }
 
 impl Message {
-    pub(crate) fn request(method: u16, transaction_id: [u8; 12], attributes: Vec<Tlv>) -> Self {
+    pub fn request(method: u16, transaction_id: [u8; 12], attributes: Vec<Tlv>) -> Self {
         Self {
             header: Header {
                 method,
@@ -69,8 +69,7 @@ impl Message {
         }
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
-    pub(crate) fn response(method: u16, transaction_id: [u8; 12], attributes: Vec<Tlv>) -> Self {
+    pub fn response(method: u16, transaction_id: [u8; 12], attributes: Vec<Tlv>) -> Self {
         Self {
             header: Header {
                 method,
@@ -82,8 +81,7 @@ impl Message {
         }
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
-    pub(crate) fn error(method: u16, transaction_id: [u8; 12], attributes: Vec<Tlv>) -> Self {
+    pub fn error(method: u16, transaction_id: [u8; 12], attributes: Vec<Tlv>) -> Self {
         Self {
             header: Header {
                 method,
@@ -95,7 +93,7 @@ impl Message {
         }
     }
 
-    pub(crate) fn indication(method: u16, transaction_id: [u8; 12], attributes: Vec<Tlv>) -> Self {
+    pub fn indication(method: u16, transaction_id: [u8; 12], attributes: Vec<Tlv>) -> Self {
         Self {
             header: Header {
                 method,
@@ -116,7 +114,7 @@ impl Message {
     }
 }
 
-pub(crate) trait EncodeDecode: Sized {
+pub trait EncodeDecode: Sized {
     fn decode_from<B: Buf>(buffer: &mut B) -> Result<Self, ParseError>;
 
     fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), io::Error>;
