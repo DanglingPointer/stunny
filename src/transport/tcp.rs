@@ -1,6 +1,5 @@
 use super::message::*;
 use super::MessageChannels;
-use bytes::Buf;
 use std::cell::Cell;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -170,10 +169,7 @@ async fn process_ingress(
         time::timeout(IO_TIMEOUT, reader.read_exact(tlvs_buffer)).await??;
 
         let mut tlvs_buffer = &*tlvs_buffer;
-        let mut attributes = Vec::new();
-        while tlvs_buffer.has_remaining() {
-            attributes.push(Tlv::decode_from(&mut tlvs_buffer)?);
-        }
+        let attributes = Vec::decode_from(&mut tlvs_buffer)?;
 
         last_active.set(Instant::now());
         if let Err(e) = ingress_sink.try_send((Message { header, attributes }, remote_addr)) {
@@ -203,9 +199,7 @@ async fn process_egress(
 
         let mut remaining_buffer = &mut buffer[..];
         message.header.encode_into(&mut remaining_buffer)?;
-        for tlv in &message.attributes {
-            tlv.encode_into(&mut remaining_buffer)?;
-        }
+        message.attributes.encode_into(&mut remaining_buffer)?;
 
         let encoded_bytes = BUFFER_LEN - remaining_buffer.len();
         time::timeout(IO_TIMEOUT, socket.write_all(&buffer[..encoded_bytes])).await??;

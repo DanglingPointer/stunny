@@ -258,6 +258,23 @@ impl EncodeDecode for Tlv {
     }
 }
 
+impl EncodeDecode for Vec<Tlv> {
+    fn decode_from<B: Buf>(buffer: &mut B) -> Result<Self, ParseError> {
+        let mut ret = Vec::new();
+        while buffer.has_remaining() {
+            ret.push(Tlv::decode_from(buffer)?);
+        }
+        Ok(ret)
+    }
+
+    fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), io::Error> {
+        for tlv in self {
+            tlv.encode_into(buffer)?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

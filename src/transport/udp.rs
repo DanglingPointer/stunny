@@ -74,10 +74,7 @@ impl Future for Ingress<'_> {
         fn decode_msg(mut buffer: &[u8]) -> Result<Message, ParseError> {
             let header = Header::decode_from(&mut buffer)?;
             let mut buffer = Buf::take(buffer, header.length as usize);
-            let mut attributes = Vec::new();
-            while buffer.has_remaining() {
-                attributes.push(Tlv::decode_from(&mut buffer)?);
-            }
+            let attributes = Vec::decode_from(&mut buffer)?;
             Ok(Message { header, attributes })
         }
 
@@ -121,9 +118,7 @@ impl Future for Egress<'_> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         fn encode_msg(msg: &Message, buffer_ref: &mut impl BufMut) -> Result<(), io::Error> {
             msg.header.encode_into(buffer_ref)?;
-            for tlv in &msg.attributes {
-                tlv.encode_into(buffer_ref)?;
-            }
+            msg.attributes.encode_into(buffer_ref)?;
             Ok(())
         }
 
