@@ -1,5 +1,6 @@
 use bitvec::prelude::*;
 use bytes::{Buf, BufMut};
+use derive_more::Debug;
 use std::borrow::Cow;
 use std::io;
 use thiserror::Error;
@@ -44,6 +45,7 @@ pub(crate) enum Class {
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct Tlv {
+    #[debug("{attribute_type:#06x}")]
     pub attribute_type: u16,
     pub value: Vec<u8>,
 }

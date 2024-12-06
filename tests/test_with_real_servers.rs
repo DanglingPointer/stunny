@@ -31,9 +31,9 @@ const GOOGLE_UDP_SERVERS: [&str; 10] = [
 ];
 
 const PUBLIC_TCP_SERVERS: [&str; 3] = [
+    "stun:stunserver2024.stunprotocol.org:3478",
     "stun:stun.sipnet.net:3478",
     "stun:stun.sipnet.ru:3478",
-    "stun:stun.stunprotocol.org:3478",
 ];
 
 fn parse_server_addrs<'a>(
