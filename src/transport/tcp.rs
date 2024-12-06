@@ -7,14 +7,15 @@ use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::{ReadHalf, WriteHalf};
 use tokio::net::TcpSocket;
 use tokio::sync::mpsc;
 use tokio::time::{self, Instant};
 use tokio::{task, try_join};
 
-pub struct Config<F = DefaultSocketFactory>
+pub struct Config<F = DefaultIPv4TcpSocketFactory>
 where
     F: TcpSocketFactory,
 {
@@ -23,12 +24,12 @@ where
     pub socket_factory: F,
 }
 
-impl Default for Config<DefaultSocketFactory> {
+impl Default for Config<DefaultIPv4TcpSocketFactory> {
     fn default() -> Self {
         Config {
             max_outstanding_requests: 10,
             connection_keep_alive: Duration::from_secs(300),
-            socket_factory: DefaultSocketFactory,
+            socket_factory: DefaultIPv4TcpSocketFactory,
         }
     }
 }
@@ -54,9 +55,9 @@ pub trait TcpSocketFactory {
     fn new_socket(&mut self) -> io::Result<TcpSocket>;
 }
 
-pub struct DefaultSocketFactory;
+pub struct DefaultIPv4TcpSocketFactory;
 
-impl TcpSocketFactory for DefaultSocketFactory {
+impl TcpSocketFactory for DefaultIPv4TcpSocketFactory {
     fn new_socket(&mut self) -> io::Result<TcpSocket> {
         let socket = TcpSocket::new_v4()?;
         socket.set_nodelay(true)?;
@@ -150,22 +151,23 @@ const BUFFER_LEN: usize = 1500;
 const IO_TIMEOUT: Duration = Duration::from_secs(39);
 
 async fn process_ingress(
-    mut socket: ReadHalf<'_>,
+    socket: impl AsyncRead + Unpin,
     ingress_sink: mpsc::Sender<(Message, SocketAddr)>,
     remote_addr: SocketAddr,
     last_active: &Cell<Instant>,
 ) -> io::Result<()> {
+    let mut reader = BufReader::with_capacity(BUFFER_LEN, socket);
     let mut buffer = [0u8; BUFFER_LEN];
     loop {
-        socket.readable().await?;
+        reader.fill_buf().await?;
 
         let header_buffer = &mut buffer[..Header::SIZE];
-        time::timeout(IO_TIMEOUT, socket.read_exact(header_buffer)).await??;
+        time::timeout(IO_TIMEOUT, reader.read_exact(header_buffer)).await??;
         let header = Header::decode_from(&mut &*header_buffer)?;
 
         let tlvs_len = header.length as usize;
         let tlvs_buffer = &mut buffer[..tlvs_len];
-        time::timeout(IO_TIMEOUT, socket.read_exact(tlvs_buffer)).await??;
+        time::timeout(IO_TIMEOUT, reader.read_exact(tlvs_buffer)).await??;
 
         let mut tlvs_buffer = &*tlvs_buffer;
         let mut attributes = Vec::new();
@@ -188,7 +190,7 @@ async fn process_ingress(
 }
 
 async fn process_egress(
-    mut socket: WriteHalf<'_>,
+    mut socket: impl AsyncWrite + Unpin,
     mut egress_source: mpsc::Receiver<Message>,
     last_active: &Cell<Instant>,
 ) -> io::Result<()> {
