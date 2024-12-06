@@ -1,6 +1,5 @@
+use super::message::*;
 use super::MessageChannels;
-use crate::error::Error;
-use crate::message::*;
 use bytes::{Buf, BufMut};
 use std::future::Future;
 use std::io;
@@ -72,7 +71,7 @@ impl Future for Ingress<'_> {
     type Output = io::Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        fn decode_msg(mut buffer: &[u8]) -> Result<Message, Error> {
+        fn decode_msg(mut buffer: &[u8]) -> Result<Message, ParseError> {
             let header = Header::decode_from(&mut buffer)?;
             let mut buffer = Buf::take(buffer, header.length as usize);
             let mut attributes = Vec::new();
@@ -120,7 +119,7 @@ impl Future for Egress<'_> {
     type Output = io::Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        fn encode_msg(msg: &Message, buffer_ref: &mut impl BufMut) -> Result<(), Error> {
+        fn encode_msg(msg: &Message, buffer_ref: &mut impl BufMut) -> Result<(), io::Error> {
             msg.header.encode_into(buffer_ref)?;
             for tlv in &msg.attributes {
                 tlv.encode_into(buffer_ref)?;

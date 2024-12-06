@@ -1,19 +1,23 @@
 use core::str;
-use std::fmt::Display;
+use std::error::Error;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-#[error("failed to parse attribute {attribute_name} ({error_msg})")]
+#[error("failed to parse attribute {attribute_name} ({inner})")]
 pub struct ParseError {
     attribute_name: &'static str,
-    error_msg: String,
+    #[source]
+    inner: Box<dyn Error + Send + Sync>,
 }
 
 impl ParseError {
-    pub fn new(name: &'static str, error: impl Display) -> Self {
+    pub fn new<E>(name: &'static str, error: E) -> Self
+    where
+        E: Error + Send + Sync + 'static,
+    {
         Self {
             attribute_name: name,
-            error_msg: error.to_string(),
+            inner: Box::new(error),
         }
     }
 }

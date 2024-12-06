@@ -6,7 +6,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 #[error("failed to parse message ({0})")]
-pub struct ParseError(Cow<'static, str>);
+pub(crate) struct ParseError(Cow<'static, str>);
 
 impl<T: Into<Cow<'static, str>>> From<T> for ParseError {
     fn from(value: T) -> Self {
@@ -21,31 +21,97 @@ impl From<ParseError> for io::Error {
 }
 
 #[derive(PartialEq, Eq, Debug)]
-pub struct Message {
-    pub header: Header,
-    pub attributes: Vec<Tlv>,
+pub(crate) struct Message {
+    pub(crate) header: Header,
+    pub(crate) attributes: Vec<Tlv>,
 }
 
 #[derive(PartialEq, Eq, Debug)]
-pub struct Header {
-    pub method: u16,
-    pub class: Class,
-    pub transaction_id: [u8; 12],
-    pub length: u16,
+pub(crate) struct Header {
+    pub(crate) method: u16,
+    pub(crate) class: Class,
+    pub(crate) transaction_id: [u8; 12],
+    pub(super) length: u16,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub enum Class {
+pub(crate) enum Class {
     Request,
     Response,
     Error,
     Indication,
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub struct Tlv {
     pub attribute_type: u16,
     pub value: Vec<u8>,
+}
+
+macro_rules! ceil_mul_4 {
+    ($x:expr) => {
+        ($x + 3) & !0x3
+    };
+}
+
+impl Message {
+    pub(crate) fn request(method: u16, transaction_id: [u8; 12], attributes: Vec<Tlv>) -> Self {
+        Self {
+            header: Header {
+                method,
+                class: Class::Request,
+                transaction_id,
+                length: Self::calculate_len(&attributes),
+            },
+            attributes,
+        }
+    }
+
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub(crate) fn response(method: u16, transaction_id: [u8; 12], attributes: Vec<Tlv>) -> Self {
+        Self {
+            header: Header {
+                method,
+                class: Class::Response,
+                transaction_id,
+                length: Self::calculate_len(&attributes),
+            },
+            attributes,
+        }
+    }
+
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub(crate) fn error(method: u16, transaction_id: [u8; 12], attributes: Vec<Tlv>) -> Self {
+        Self {
+            header: Header {
+                method,
+                class: Class::Error,
+                transaction_id,
+                length: Self::calculate_len(&attributes),
+            },
+            attributes,
+        }
+    }
+
+    pub(crate) fn indication(method: u16, transaction_id: [u8; 12], attributes: Vec<Tlv>) -> Self {
+        Self {
+            header: Header {
+                method,
+                class: Class::Indication,
+                transaction_id,
+                length: Self::calculate_len(&attributes),
+            },
+            attributes,
+        }
+    }
+
+    fn calculate_len<'t>(attributes: impl IntoIterator<Item = &'t Tlv>) -> u16 {
+        let len: usize = attributes
+            .into_iter()
+            .map(|tlv| ceil_mul_4!(tlv.value.len()) + Tlv::HEADER_SIZE)
+            .sum();
+        len as u16
+    }
 }
 
 pub(crate) trait EncodeDecode: Sized {
@@ -57,20 +123,20 @@ pub(crate) trait EncodeDecode: Sized {
 const MAGIC_COOKIE: u32 = 0x2112A442;
 
 impl Header {
-    pub const LENGTH: usize = 20;
+    pub(super) const SIZE: usize = 20;
 }
 
 impl Tlv {
-    pub const MIN_LENGTH: usize = 4;
+    pub(super) const HEADER_SIZE: usize = 4;
 }
 
 impl EncodeDecode for Header {
     fn decode_from<B: Buf>(buffer: &mut B) -> Result<Self, ParseError> {
-        if buffer.remaining() < Self::LENGTH {
+        if buffer.remaining() < Self::SIZE {
             return Err("incorrect header length".into());
         }
 
-        let mut buffer = buffer.take(Self::LENGTH);
+        let mut buffer = buffer.take(Self::SIZE);
 
         let method_class_bytes = buffer.get_u16();
         let length = buffer.get_u16();
@@ -119,7 +185,7 @@ impl EncodeDecode for Header {
     }
 
     fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), io::Error> {
-        if buffer.remaining_mut() < Self::LENGTH {
+        if buffer.remaining_mut() < Self::SIZE {
             return Err(io::Error::new(
                 io::ErrorKind::OutOfMemory,
                 "not enough bytes to write header",
@@ -146,13 +212,13 @@ impl EncodeDecode for Header {
 
 impl EncodeDecode for Tlv {
     fn decode_from<B: Buf>(buffer: &mut B) -> Result<Self, ParseError> {
-        if buffer.remaining() < Self::MIN_LENGTH {
+        if buffer.remaining() < Self::HEADER_SIZE {
             return Err("buffer not long enough to read TLV".into());
         }
 
         let attribute_type = buffer.get_u16();
         let value_len = buffer.get_u16() as usize;
-        let real_value_len = (value_len + 3) & !0x3;
+        let real_value_len = ceil_mul_4!(value_len);
 
         if buffer.remaining() < real_value_len {
             return Err(format!(
@@ -174,7 +240,7 @@ impl EncodeDecode for Tlv {
     }
 
     fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), io::Error> {
-        let real_value_len = (self.value.len() + 3) & !0x3;
+        let real_value_len = ceil_mul_4!(self.value.len());
 
         if buffer.remaining_mut() < 4 + real_value_len {
             return Err(io::Error::new(
@@ -232,7 +298,7 @@ mod tests {
 
     #[test]
     fn encode_bind_request_header() {
-        let mut buffer = [0u8; Header::LENGTH];
+        let mut buffer = [0u8; Header::SIZE];
         let header = Header {
             method: 0b000000000001,
             class: Class::Request,
@@ -255,7 +321,7 @@ mod tests {
 
     #[test]
     fn encode_bind_response_header() {
-        let mut buffer = [0u8; Header::LENGTH];
+        let mut buffer = [0u8; Header::SIZE];
         let header = Header {
             method: 0b000000000001,
             class: Class::Response,
@@ -358,5 +424,28 @@ mod tests {
             b'U', b'g', b'h', b'!',
         ];
         assert_eq!(buffer, expected);
+    }
+
+    #[test]
+    fn calculate_message_length() {
+        let attributes = [
+            Tlv {
+                attribute_type: 0x8022,
+                value: b"Ugh!".to_vec(),
+            },
+            Tlv {
+                attribute_type: 0x8022,
+                value: Vec::new(),
+            },
+            Tlv {
+                attribute_type: 0x8022,
+                value: b"A".to_vec(),
+            },
+            Tlv {
+                attribute_type: 0x8022,
+                value: b"B".to_vec(),
+            },
+        ];
+        assert_eq!(Message::calculate_len(attributes.iter()), 28);
     }
 }

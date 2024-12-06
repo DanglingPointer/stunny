@@ -1,4 +1,4 @@
-use crate::message::*;
+use super::message::*;
 
 #[rustfmt::skip]
 pub(super) const BIND_REQUEST_BYTES: [u8; 28] = [

@@ -1,5 +1,5 @@
+use super::message::*;
 use super::MessageChannels;
-use crate::message::*;
 use bytes::Buf;
 use std::cell::Cell;
 use std::collections::hash_map::Entry;
@@ -158,7 +158,7 @@ async fn process_ingress(
     loop {
         socket.readable().await?;
 
-        let header_buffer = &mut buffer[..Header::LENGTH];
+        let header_buffer = &mut buffer[..Header::SIZE];
         time::timeout(IO_TIMEOUT, socket.read_exact(header_buffer)).await??;
         let header = Header::decode_from(&mut &*header_buffer)?;
 
@@ -415,10 +415,7 @@ mod tests {
             let mut farend_sock = accept_task.await.unwrap();
             verify_egress!(farend_sock, BIND_REQUEST_BYTES);
 
-            farend_sock
-                .write_all(&[0xff; Header::LENGTH])
-                .await
-                .unwrap();
+            farend_sock.write_all(&[0xff; Header::SIZE]).await.unwrap();
             task::yield_now().await;
             assert!(channels.ingress_source.try_recv().is_err());
 
