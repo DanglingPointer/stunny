@@ -7,6 +7,11 @@ description = "STUN implementation in Rust"
 repository = "https://github.com/DanglingPointer/stunny"
 license = "Apache-2.0"
 
+[features]
+default = ["udp", "tcp"]
+udp = []
+tcp = []
+
 [dependencies]
 rand = "0.8.5"
 bitvec = { version = "1.0.1", default-features = false, features = ["alloc"] }

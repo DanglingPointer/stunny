@@ -7,7 +7,11 @@ use tokio::sync::mpsc;
 mod testutils;
 
 pub mod message;
+
+#[cfg(feature = "tcp")]
 pub mod tcp;
+
+#[cfg(feature = "udp")]
 pub mod udp;
 
 pub struct MessageChannels {
