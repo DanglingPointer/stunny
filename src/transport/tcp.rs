@@ -132,6 +132,7 @@ async fn run_connection(
     egress_source: mpsc::Receiver<Message>,
     inactivity_timeout: Duration,
 ) -> io::Result<()> {
+    log::trace!("Connecting to {remote_addr}");
     let mut stream = time::timeout(IO_TIMEOUT, socket.connect(remote_addr)).await??;
     log::debug!("Successfully connected to {remote_addr}");
 
