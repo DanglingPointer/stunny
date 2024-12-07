@@ -1,5 +1,5 @@
 use super::*;
-use rand::random;
+use rand::Rng;
 use std::cmp::Ordering;
 use std::collections::binary_heap::PeekMut;
 use std::collections::hash_map::Entry;
@@ -48,7 +48,8 @@ pub(super) struct Manager<P> {
     outstanding_requests: HashMap<TransactionId, Request>,
     egress_sink: mpsc::Sender<(Message, SocketAddr)>,
     incoming_indications_sink: mpsc::Sender<Indication>,
-    rto: P,
+    rto_policy: P,
+    rand_gen: rand::rngs::ThreadRng,
 }
 
 impl<P: RtoPolicy> Manager<P> {
@@ -62,7 +63,8 @@ impl<P: RtoPolicy> Manager<P> {
             outstanding_requests: Default::default(),
             egress_sink,
             incoming_indications_sink,
-            rto: rto_policy,
+            rto_policy,
+            rand_gen: rand::thread_rng(),
         }
     }
 
@@ -83,7 +85,7 @@ impl<P: RtoPolicy> Manager<P> {
                 Entry::Vacant(_) => unreachable!("no request for pending timeout"),
             };
             let request = outstanding.get();
-            match self.rto.calculate_rto(
+            match self.rto_policy.calculate_rto(
                 request.destination_addr,
                 request.attempts_made,
                 request.start_time,
@@ -117,7 +119,7 @@ impl<P: RtoPolicy> Manager<P> {
         &mut self,
         indication: Indication,
     ) -> Result<(), TransactionError> {
-        let tid = random::<TransactionId>();
+        let tid = self.rand_gen.gen::<TransactionId>();
         let msg = Message::indication(indication.method, tid, indication.attributes.clone());
         self.egress_sink.send((msg, indication.farend_addr)).await?;
         Ok(())
@@ -127,14 +129,14 @@ impl<P: RtoPolicy> Manager<P> {
         &mut self,
         mut request: Request,
     ) -> Result<(), TransactionError> {
-        let tid = random::<TransactionId>();
+        let tid = self.rand_gen.gen::<TransactionId>();
         let msg = Message::request(request.method, tid, request.attributes.clone());
         match self.egress_sink.send((msg, request.destination_addr)).await {
             Ok(_) => {
                 let now = Instant::now();
 
                 let initial_rto = self
-                    .rto
+                    .rto_policy
                     .calculate_rto(request.destination_addr, 0, now)
                     .unwrap_or(DEFAULT_RTO);
                 self.pending_timeouts.push(PendingTimeout {
@@ -190,7 +192,7 @@ impl<P: RtoPolicy> Manager<P> {
                 };
 
                 if request.attempts_made == 1 {
-                    self.rto
+                    self.rto_policy
                         .submit_rtt(source_addr, request.start_time.elapsed());
                 }
 
