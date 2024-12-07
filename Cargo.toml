@@ -11,20 +11,27 @@ license = "Apache-2.0"
 default = ["udp", "tcp"]
 udp = []
 tcp = []
+tls = ["dep:tokio-rustls"]
 
 [dependencies]
 rand = "0.8.5"
 bitvec = { version = "1.0.1", default-features = false, features = ["alloc"] }
 bytes = "1.9.0"
 log = "0.4.22"
-thiserror = "2.0.3"
+thiserror = "2.0.5"
 derive_more = { version = "1.0.0", features = ["debug"] }
+futures-util = { version = "0.3.31", default-features = false }
 tokio = { version = "1.42.0", default-features = false, features = [
     "net",
     "sync",
     "io-util",
     "macros",
     "rt",
+    "time",
+] }
+tokio-rustls = { version = "0.26.1", default-features = false, optional = true, features = [
+    "tls12",
+    "aws_lc_rs",
 ] }
 
 [dev-dependencies]

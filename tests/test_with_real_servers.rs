@@ -3,10 +3,11 @@ use local_async_utils::{local_sync, millisec, sec};
 use std::collections::HashSet;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
+use std::time::Duration;
 use stunny::transactions::*;
-use stunny::transport::tcp::{setup_tcp, Config};
+use stunny::transport::tcp::setup_tcp;
 use stunny::transport::udp::setup_udp;
-use tokio::net::UdpSocket;
+use tokio::net::{TcpSocket, UdpSocket};
 use tokio::{join, task, time};
 
 macro_rules! local_test {
@@ -106,7 +107,10 @@ async fn send_bind_request_over_tcp() {
     local_test!({
         const MAX_CONCURRENT_REQUESTS: usize = 10;
 
-        let (message_channels, connection_pool) = setup_tcp(Config::default());
+        let (message_channels, connection_pool) =
+            setup_tcp(MAX_CONCURRENT_REQUESTS, Duration::from_secs(10), || {
+                TcpSocket::new_v4().inspect(|s| s.set_nodelay(true).unwrap())
+            });
 
         let (request_sender, _, _, processor) = setup_transactions(
             message_channels,

@@ -8,8 +8,14 @@ mod testutils;
 
 pub mod message;
 
+#[cfg(any(feature = "tcp", feature = "tls"))]
+mod connection_pool;
+
 #[cfg(feature = "tcp")]
 pub mod tcp;
+
+#[cfg(feature = "tls")]
+pub mod tls;
 
 #[cfg(feature = "udp")]
 pub mod udp;
