@@ -15,6 +15,6 @@ pub mod tcp;
 pub mod udp;
 
 pub struct MessageChannels {
-    pub(crate) egress_sink: mpsc::Sender<(Message, SocketAddr)>,
-    pub(crate) ingress_source: mpsc::Receiver<(Message, SocketAddr)>,
+    pub egress_sink: mpsc::Sender<(Message, SocketAddr)>,
+    pub ingress_source: mpsc::Receiver<(Message, SocketAddr)>,
 }
