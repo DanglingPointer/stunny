@@ -18,18 +18,6 @@ pub use error::*;
 pub use interface::*;
 pub use rto::*;
 
-#[derive(Debug)]
-pub enum Response {
-    Success(Vec<Tlv>),
-    Error(Vec<Tlv>),
-}
-
-pub struct Indication {
-    pub farend_addr: SocketAddr,
-    pub method: u16,
-    pub attributes: Vec<Tlv>,
-}
-
 pub fn setup_transactions<P: RtoPolicy>(
     message_channels: MessageChannels,
     max_outstanding_requests: usize,

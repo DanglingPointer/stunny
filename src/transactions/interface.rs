@@ -1,7 +1,22 @@
 use super::*;
+use derive_more::Debug;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use tokio::sync::{mpsc, oneshot, Semaphore};
+
+#[derive(Debug)]
+pub enum Response {
+    Success(Vec<Tlv>),
+    Error(Vec<Tlv>),
+}
+
+#[derive(Debug)]
+pub struct Indication {
+    pub farend_addr: SocketAddr,
+    #[debug("{method:#06x}")]
+    pub method: u16,
+    pub attributes: Vec<Tlv>,
+}
 
 #[derive(Clone)]
 pub struct RequestSender {

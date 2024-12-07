@@ -1,5 +1,5 @@
 use futures::StreamExt;
-use local_async_utils::{local_sync, sec};
+use local_async_utils::{local_sync, millisec, sec};
 use std::collections::HashSet;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
@@ -70,7 +70,7 @@ async fn send_bind_request_over_udp() {
         let (request_sender, _, _, processor) = setup_transactions(
             message_channels,
             MAX_CONCURRENT_REQUESTS,
-            NoRetransmissionsConstTimeout::new(sec!(1)),
+            DefaultExponentialBackoffFixedRtt::new(millisec!(100)),
         );
 
         task::spawn_local(async move {

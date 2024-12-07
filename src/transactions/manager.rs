@@ -85,11 +85,10 @@ impl<P: RtoPolicy> Manager<P> {
                 Entry::Vacant(_) => unreachable!("no request for pending timeout"),
             };
             let request = outstanding.get();
-            match self.rto_policy.calculate_rto(
-                request.destination_addr,
-                request.attempts_made,
-                request.start_time,
-            ) {
+            match self
+                .rto_policy
+                .calculate_rto(request.destination_addr, request.attempts_made)
+            {
                 None => {
                     // erase entry and invoke callback with error
                     let _ = outstanding
@@ -102,6 +101,7 @@ impl<P: RtoPolicy> Manager<P> {
                     // retransmit request
                     let msg =
                         Message::request(request.method, timeout.tid, request.attributes.clone());
+                    log::trace!("Re-sending request to {:?}", request.destination_addr);
                     self.egress_sink
                         .send((msg, request.destination_addr))
                         .await?;
@@ -121,6 +121,7 @@ impl<P: RtoPolicy> Manager<P> {
     ) -> Result<(), TransactionError> {
         let tid = self.rand_gen.gen::<TransactionId>();
         let msg = Message::indication(indication.method, tid, indication.attributes.clone());
+        log::trace!("Sending indication to {:?}", indication.farend_addr);
         self.egress_sink.send((msg, indication.farend_addr)).await?;
         Ok(())
     }
@@ -131,13 +132,14 @@ impl<P: RtoPolicy> Manager<P> {
     ) -> Result<(), TransactionError> {
         let tid = self.rand_gen.gen::<TransactionId>();
         let msg = Message::request(request.method, tid, request.attributes.clone());
+        log::trace!("Sending request to {:?}", request.destination_addr);
         match self.egress_sink.send((msg, request.destination_addr)).await {
             Ok(_) => {
                 let now = Instant::now();
 
                 let initial_rto = self
                     .rto_policy
-                    .calculate_rto(request.destination_addr, 0, now)
+                    .calculate_rto(request.destination_addr, 0)
                     .unwrap_or(DEFAULT_RTO);
                 self.pending_timeouts.push(PendingTimeout {
                     timeout_at: now + initial_rto,
@@ -192,6 +194,8 @@ impl<P: RtoPolicy> Manager<P> {
                         return Ok(());
                     }
                 };
+                self.pending_timeouts
+                    .retain(|pt| pt.tid != message.header.transaction_id);
 
                 if request.attempts_made == 1 {
                     self.rto_policy
@@ -214,8 +218,6 @@ impl<P: RtoPolicy> Manager<P> {
                     }
                 };
                 let _ = request.response_sink.send(result);
-                self.pending_timeouts
-                    .retain(|pt| pt.tid != message.header.transaction_id);
             }
         }
         Ok(())
