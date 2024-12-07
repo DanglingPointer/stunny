@@ -75,12 +75,10 @@ impl<P: RtoPolicy> Processor<P> {
                     let msg_and_src = inbound.ok_or(TransactionError::ChannelClosed)?;
                     self.manager.handle_incoming_message(msg_and_src).await?;
                 }
-                outbound = self.outbound_req_source.recv() => {
-                    let request = outbound.ok_or(TransactionError::ChannelClosed)?;
+                Some(request) = self.outbound_req_source.recv() => {
                     self.manager.handle_outgoing_request(request).await?;
                 }
-                outbound = self.outbound_ind_source.recv() => {
-                    let indication = outbound.ok_or(TransactionError::ChannelClosed)?;
+                Some(indication) = self.outbound_ind_source.recv() => {
                     self.manager.handle_outgoing_indication(indication).await?;
                 }
                 _ = Self::sleep_until(next_timeout), if next_timeout.is_some() => {

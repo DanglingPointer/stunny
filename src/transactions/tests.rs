@@ -27,7 +27,7 @@ fn ip(port: u16) -> SocketAddr {
 fn single_outgoing_request() {
     let (egress_sink, mut egress_source) = mpsc::channel(10);
     let (ingress_sink, ingress_source) = mpsc::channel(10);
-    let (req_sender, _ind_sender, _ind_receiver, processor) = setup_transactions(
+    let (req_sender, _, _, processor) = setup_transactions(
         MessageChannels {
             egress_sink,
             ingress_source,
@@ -72,7 +72,7 @@ fn single_outgoing_request() {
 fn concurrent_outgoing_requests() {
     let (egress_sink, mut egress_source) = mpsc::channel(10);
     let (ingress_sink, ingress_source) = mpsc::channel(10);
-    let (req_sender, _ind_sender, _ind_receiver, processor) = setup_transactions(
+    let (req_sender, _, _, processor) = setup_transactions(
         MessageChannels {
             egress_sink,
             ingress_source,
@@ -141,4 +141,63 @@ fn concurrent_outgoing_requests() {
     let result = assert_ready!(request1_fut.poll());
     let response1 = result.unwrap();
     assert!(matches!(response1, Response::Error(attributes) if attributes == vec![attribute()]));
+}
+
+#[test]
+fn outgoing_indication() {
+    let (egress_sink, mut egress_source) = mpsc::channel(10);
+    let (_ingress_sink, ingress_source) = mpsc::channel(10);
+    let (_, ind_sender, _, processor) = setup_transactions(
+        MessageChannels {
+            egress_sink,
+            ingress_source,
+        },
+        1,
+        NoRetransmissionsConstTimeout::new(Duration::from_secs(1)),
+    );
+    let mut runner_fut = spawn(processor.run());
+    assert_pending!(runner_fut.poll());
+
+    // when
+    let mut indication_fut = spawn(ind_sender.send_indication(ip(1234), 42u16, vec![attribute()]));
+    assert_ready!(indication_fut.poll()).unwrap();
+    assert!(runner_fut.is_woken());
+    assert_pending!(runner_fut.poll());
+
+    // then
+    let (indication, addr) = egress_source.try_recv().unwrap();
+    assert_eq!(addr, ip(1234));
+    assert_eq!(indication.header.class, Class::Indication);
+    assert_eq!(indication.header.method, 42u16);
+    assert_eq!(indication.attributes, vec![attribute()]);
+}
+
+#[test]
+fn incoming_indication() {
+    let (egress_sink, _egress_source) = mpsc::channel(10);
+    let (ingress_sink, ingress_source) = mpsc::channel(10);
+    let (_, _, mut ind_receiver, processor) = setup_transactions(
+        MessageChannels {
+            egress_sink,
+            ingress_source,
+        },
+        1,
+        NoRetransmissionsConstTimeout::new(Duration::from_secs(1)),
+    );
+    let mut runner_fut = spawn(processor.run());
+    assert_pending!(runner_fut.poll());
+    let mut receive_fut = spawn(ind_receiver.receive_next());
+
+    // when
+    let indication = Message::indication(42u16, [0xaf; 12], vec![attribute()]);
+    ingress_sink.try_send((indication, ip(1234))).unwrap();
+
+    // then
+    assert!(runner_fut.is_woken());
+    assert_pending!(runner_fut.poll());
+    let result = assert_ready!(receive_fut.poll());
+    let indication = result.unwrap();
+    assert_eq!(indication.farend_addr, ip(1234));
+    assert_eq!(indication.method, 42u16);
+    assert_eq!(indication.attributes, vec![attribute()]);
 }

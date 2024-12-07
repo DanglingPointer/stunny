@@ -67,12 +67,11 @@ async fn send_bind_request_over_udp() {
 
         let (message_channels, driver) = setup_udp(socket, MAX_CONCURRENT_REQUESTS);
 
-        let (request_sender, _indication_sender, _indication_receiver, processor) =
-            setup_transactions(
-                message_channels,
-                MAX_CONCURRENT_REQUESTS,
-                NoRetransmissionsConstTimeout::new(sec!(1)),
-            );
+        let (request_sender, _, _, processor) = setup_transactions(
+            message_channels,
+            MAX_CONCURRENT_REQUESTS,
+            NoRetransmissionsConstTimeout::new(sec!(1)),
+        );
 
         task::spawn_local(async move {
             let _result = join!(driver.run(), processor.run());
@@ -109,12 +108,11 @@ async fn send_bind_request_over_tcp() {
 
         let (message_channels, connection_pool) = setup_tcp(Config::default());
 
-        let (request_sender, _indication_sender, _indication_receiver, processor) =
-            setup_transactions(
-                message_channels,
-                MAX_CONCURRENT_REQUESTS,
-                NoRetransmissionsConstTimeout::new(sec!(1)),
-            );
+        let (request_sender, _, _, processor) = setup_transactions(
+            message_channels,
+            MAX_CONCURRENT_REQUESTS,
+            NoRetransmissionsConstTimeout::new(sec!(1)),
+        );
 
         task::spawn_local(async move {
             let _result = join!(connection_pool.run(), processor.run());

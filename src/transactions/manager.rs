@@ -167,13 +167,15 @@ impl<P: RtoPolicy> Manager<P> {
                 log::error!("Ignoring incoming request: handling of requests is not supported");
             }
             Class::Indication => {
-                self.incoming_indications_sink
-                    .send(Indication {
+                if let Ok(sender) = self.incoming_indications_sink.reserve().await {
+                    sender.send(Indication {
                         farend_addr: source_addr,
                         method: message.header.method,
                         attributes: message.attributes,
-                    })
-                    .await?;
+                    });
+                } else {
+                    log::debug!("Dropping received indication: no listener");
+                }
             }
             Class::Response | Class::Error => {
                 let request = match self
@@ -221,11 +223,6 @@ impl<P: RtoPolicy> Manager<P> {
 }
 
 const DEFAULT_RTO: Duration = Duration::from_millis(1500);
-
-// fn calculate_msg_len<'t>(attributes: impl IntoIterator<Item = &'t Tlv>) -> u16 {
-//     let len: usize = attributes.into_iter().map(|tlv| tlv.value.len()).sum();
-//     (len as u16 + 3) & !0x3
-// }
 
 impl PartialEq for PendingTimeout {
     fn eq(&self, other: &Self) -> bool {

@@ -242,7 +242,7 @@ impl EncodeDecode for Tlv {
     fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), io::Error> {
         let real_value_len = ceil_mul_4!(self.value.len());
 
-        if buffer.remaining_mut() < 4 + real_value_len {
+        if buffer.remaining_mut() < Self::HEADER_SIZE + real_value_len {
             return Err(io::Error::new(
                 io::ErrorKind::OutOfMemory,
                 "not enough bytes to write TLV",
