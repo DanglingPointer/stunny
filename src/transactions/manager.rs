@@ -1,4 +1,5 @@
 use super::*;
+use crate::attributes::{Attribute, XorMappedAddress};
 use rand::Rng;
 use std::cmp::Ordering;
 use std::collections::binary_heap::PeekMut;
@@ -6,6 +7,7 @@ use std::collections::hash_map::Entry;
 use std::collections::{BinaryHeap, HashMap};
 use std::net::SocketAddr;
 use std::time::Duration;
+use std::{iter, mem};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
@@ -120,7 +122,11 @@ impl<P: RtoPolicy> Manager<P> {
         indication: Indication,
     ) -> Result<(), TransactionError> {
         let tid = self.rand_gen.gen::<TransactionId>();
-        let msg = Message::indication(indication.method, tid, indication.attributes.clone());
+        let msg = convert_xor_mapped_addr(Message::indication(
+            indication.method,
+            tid,
+            indication.attributes,
+        ));
         log::trace!("Sending indication to {:?}", indication.farend_addr);
         self.egress_sink.send((msg, indication.farend_addr)).await?;
         Ok(())
@@ -131,7 +137,12 @@ impl<P: RtoPolicy> Manager<P> {
         mut request: Request,
     ) -> Result<(), TransactionError> {
         let tid = self.rand_gen.gen::<TransactionId>();
-        let msg = Message::request(request.method, tid, request.attributes.clone());
+        let msg = convert_xor_mapped_addr(Message::request(
+            request.method,
+            tid,
+            mem::take(&mut request.attributes),
+        ));
+        request.attributes = msg.attributes.clone();
         log::trace!("Sending request to {:?}", request.destination_addr);
         match self.egress_sink.send((msg, request.destination_addr)).await {
             Ok(_) => {
@@ -164,6 +175,7 @@ impl<P: RtoPolicy> Manager<P> {
         &mut self,
         (message, source_addr): (Message, SocketAddr),
     ) -> Result<(), TransactionError> {
+        let message = convert_xor_mapped_addr(message);
         match message.header.class {
             Class::Request => {
                 log::error!("Ignoring incoming request: handling of requests is not supported");
@@ -186,7 +198,7 @@ impl<P: RtoPolicy> Manager<P> {
                 {
                     Some(request) if request.destination_addr == source_addr => request,
                     Some(_) => {
-                        log::warn!("Received response from unexpected source");
+                        log::warn!("Received response from unexpected source {source_addr}");
                         return Ok(());
                     }
                     None => {
@@ -222,6 +234,48 @@ impl<P: RtoPolicy> Manager<P> {
         }
         Ok(())
     }
+}
+
+/// Convert values of all XOR-MAPPED-ADDRESS attributes to MAPPED-ADDRESS
+fn convert_xor_mapped_addr(mut msg: Message) -> Message {
+    let tid = msg.header.transaction_id;
+    for tlv in &mut msg.attributes {
+        if tlv.attribute_type != XorMappedAddress::ID {
+            continue;
+        }
+        if let Some(port_bytes) = tlv.value.get_mut(2..4) {
+            port_bytes[0] ^= 0x21;
+            port_bytes[1] ^= 0x12;
+        }
+        if let Some(family) = tlv.value.get(1) {
+            match *family {
+                0x01 => {
+                    // IPv4
+                    if let Some(addr_bytes) = tlv.value.get_mut(4..8) {
+                        let xored_with = MAGIC_COOKIE.to_be_bytes();
+
+                        for (lhs, rhs) in iter::zip(addr_bytes, xored_with) {
+                            *lhs ^= rhs;
+                        }
+                    }
+                }
+                0x02 => {
+                    // IPv6
+                    if let Some(addr_bytes) = tlv.value.get_mut(4..20) {
+                        let mut xored_with = [0u8; 16];
+                        xored_with[0..4].copy_from_slice(MAGIC_COOKIE.to_be_bytes().as_slice());
+                        xored_with[4..].copy_from_slice(tid.as_slice());
+
+                        for (lhs, rhs) in iter::zip(addr_bytes, xored_with) {
+                            *lhs ^= rhs;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    msg
 }
 
 const DEFAULT_RTO: Duration = Duration::from_millis(1500);

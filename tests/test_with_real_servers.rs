@@ -13,7 +13,7 @@ use tokio::{join, task, time};
 
 macro_rules! local_test {
     ($($arg:tt)+) => {{
-        task::LocalSet::new().run_until(time::timeout(sec!(10), async $($arg)+)).await.expect("test timeout");
+        task::LocalSet::new().run_until(time::timeout(sec!(10), async { $($arg)+ })).await.expect("test timeout");
     }}
 }
 
@@ -82,7 +82,7 @@ async fn send_bind_request_over_udp() {
     let _ = simple_logger::SimpleLogger::new()
         .with_level(log::LevelFilter::Trace)
         .init();
-    local_test!({
+    local_test! {
         const MAX_CONCURRENT_REQUESTS: usize = 10;
 
         let socket = create_udp_socket().await.unwrap();
@@ -123,7 +123,7 @@ async fn send_bind_request_over_udp() {
             .filter_map(parse_mapped_addr)
             .collect();
         assert!(!addrs.is_empty(), "{addrs:?}");
-    })
+    }
 }
 
 #[tokio::test]
@@ -131,7 +131,7 @@ async fn send_bind_request_over_tcp() {
     let _ = simple_logger::SimpleLogger::new()
         .with_level(log::LevelFilter::Trace)
         .init();
-    local_test!({
+    local_test! {
         const MAX_CONCURRENT_REQUESTS: usize = 10;
 
         let (message_channels, connection_pool) =
@@ -173,5 +173,5 @@ async fn send_bind_request_over_tcp() {
             .filter_map(parse_mapped_addr)
             .collect();
         assert!(!addrs.is_empty(), "{addrs:?}");
-    })
+    }
 }
