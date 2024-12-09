@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
 use std::time::Duration;
+use stunny::attributes::{AttributeCollection, MappedAddress};
 use stunny::transactions::*;
 use stunny::transport::tcp::setup_tcp;
 use stunny::transport::udp::setup_udp;
@@ -56,6 +57,18 @@ async fn do_bind_request(
     result_sender.send(result);
 }
 
+fn parse_mapped_addr(response: &mut Response) -> Option<SocketAddr> {
+    match response {
+        Response::Success(attributes) => attributes
+            .extract::<MappedAddress>()
+            .inspect_err(|e| println!("failed to extract mapped address: {e}"))
+            .map(|mapped_addr| mapped_addr.0)
+            .inspect(|addr| println!("external address found: {addr}"))
+            .ok(),
+        Response::Error(_) => None,
+    }
+}
+
 #[tokio::test]
 async fn send_bind_request_over_udp() {
     let _ = simple_logger::SimpleLogger::new()
@@ -95,6 +108,13 @@ async fn send_bind_request_over_udp() {
                 .iter()
                 .any(|result| matches!(result, Ok(Response::Success(_)))),
             "{results:?}"
+        );
+        assert!(
+            results
+                .into_iter()
+                .filter_map(|result| result.ok())
+                .any(|mut result| parse_mapped_addr(&mut result).is_some()),
+            "no mapped address in the responses"
         );
     })
 }
@@ -139,6 +159,13 @@ async fn send_bind_request_over_tcp() {
                 .iter()
                 .any(|result| matches!(result, Ok(Response::Success(_)))),
             "{results:?}"
+        );
+        assert!(
+            results
+                .into_iter()
+                .filter_map(|result| result.ok())
+                .any(|mut result| parse_mapped_addr(&mut result).is_some()),
+            "no mapped address in the responses"
         );
     })
 }
