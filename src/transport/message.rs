@@ -120,7 +120,7 @@ pub trait EncodeDecode: Sized {
     fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), io::Error>;
 }
 
-const MAGIC_COOKIE: u32 = 0x2112A442;
+pub(crate) const MAGIC_COOKIE: u32 = 0x2112A442;
 
 impl Header {
     pub(super) const SIZE: usize = 20;

@@ -1,4 +1,4 @@
-use crate::transport::message::Tlv;
+use crate::transport::message::{Tlv, MAGIC_COOKIE};
 use bytes::{Buf, BufMut};
 use core::str;
 use std::error::Error;
@@ -70,6 +70,7 @@ impl AttributeCollection for Vec<Tlv> {
 
 // ------------------------------------------------------------------------------------------------
 
+#[derive(Debug)]
 pub struct MappedAddress(pub SocketAddr);
 
 impl Attribute for MappedAddress {
@@ -143,9 +144,78 @@ impl Attribute for MappedAddress {
     }
 }
 
-pub struct SoftwareAttribute(pub String);
+#[derive(Debug)]
+pub struct XorMappedAddress(pub SocketAddr);
 
-impl Attribute for SoftwareAttribute {
+impl Attribute for XorMappedAddress {
+    const ID: u16 = 0x0020;
+
+    fn encode_value(self) -> Vec<u8> {
+        let mut value = Vec::new();
+        value.put_u8(0);
+        match self.0 {
+            SocketAddr::V4(addr) => {
+                value.put_u8(0x01);
+                value.put_u16(addr.port() ^ 0x2112u16);
+                value.put_u32(addr.ip().to_bits() ^ MAGIC_COOKIE);
+            }
+            SocketAddr::V6(_addr) => {
+                unimplemented!("XOR-MAPPED-ADDRESS is not implemented for IPv6");
+            }
+        }
+        value
+    }
+
+    fn decode_value(tlv_value: Vec<u8>) -> Result<Self, ParseError> {
+        fn parse_error(what: impl ToString) -> ParseError {
+            ParseError {
+                attribute_name: "XOR-MAPPED-ADDRESS",
+                inner: what.to_string().into(),
+            }
+        }
+
+        let mut buffer = tlv_value.as_slice();
+
+        if buffer.remaining() < 4 {
+            return Err(parse_error("buffer too short"));
+        }
+
+        if buffer.get_u8() != 0x00 {
+            return Err(parse_error("incorrect prefix byte"));
+        }
+
+        let family = buffer.get_u8();
+        let port = buffer.get_u16() ^ 0x2112u16;
+
+        let ip = match family {
+            0x01 => {
+                if buffer.remaining() < 4 {
+                    return Err(parse_error("not enough bytes for IPv4 address"));
+                }
+                let octets = buffer.get_u32();
+                IpAddr::V4(Ipv4Addr::from_bits(octets ^ MAGIC_COOKIE))
+            }
+            0x02 => {
+                if buffer.remaining() < 16 {
+                    return Err(parse_error("not enough bytes for IPv6 address"));
+                }
+                unimplemented!("XOR-MAPPED-ADDRESS is not implemented for IPv6");
+            }
+            _ => {
+                return Err(parse_error(format!(
+                    "unexpected ip version {:#04x}",
+                    family
+                )));
+            }
+        };
+
+        Ok(Self(SocketAddr::new(ip, port)))
+    }
+}
+
+pub struct Software(pub String);
+
+impl Attribute for Software {
     const ID: u16 = 0x8022;
 
     fn encode_value(self) -> Vec<u8> {

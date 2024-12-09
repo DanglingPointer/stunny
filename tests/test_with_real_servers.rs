@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
 use std::time::Duration;
-use stunny::attributes::{AttributeCollection, MappedAddress};
+use stunny::attributes::{AttributeCollection, MappedAddress, XorMappedAddress};
 use stunny::transactions::*;
 use stunny::transport::tcp::setup_tcp;
 use stunny::transport::udp::setup_udp;
@@ -57,14 +57,22 @@ async fn do_bind_request(
     result_sender.send(result);
 }
 
-fn parse_mapped_addr(response: &mut Response) -> Option<SocketAddr> {
+fn parse_mapped_addr(response: Response) -> Option<SocketAddr> {
     match response {
-        Response::Success(attributes) => attributes
-            .extract::<MappedAddress>()
-            .inspect_err(|e| println!("failed to extract mapped address: {e}"))
-            .map(|mapped_addr| mapped_addr.0)
-            .inspect(|addr| println!("external address found: {addr}"))
-            .ok(),
+        Response::Success(mut attributes) => {
+            let mapped_addr = attributes.extract::<MappedAddress>();
+            let xor_mapped_addr = attributes.extract::<XorMappedAddress>();
+            println!("MAPPED-ADDR: {mapped_addr:?}, XOR-MAPPED-ADDR: {xor_mapped_addr:?}");
+            match (mapped_addr, xor_mapped_addr) {
+                (Ok(MappedAddress(mapped)), Ok(XorMappedAddress(xor_mapped))) => {
+                    assert_eq!(mapped, xor_mapped);
+                    Some(mapped)
+                }
+                (Ok(MappedAddress(mapped)), Err(_)) => Some(mapped),
+                (Err(_), Ok(XorMappedAddress(xor_mapped))) => Some(xor_mapped),
+                (Err(_), Err(_)) => None,
+            }
+        }
         Response::Error(_) => None,
     }
 }
@@ -109,13 +117,12 @@ async fn send_bind_request_over_udp() {
                 .any(|result| matches!(result, Ok(Response::Success(_)))),
             "{results:?}"
         );
-        assert!(
-            results
-                .into_iter()
-                .filter_map(|result| result.ok())
-                .any(|mut result| parse_mapped_addr(&mut result).is_some()),
-            "no mapped address in the responses"
-        );
+        let addrs: Vec<_> = results
+            .into_iter()
+            .filter_map(|result| result.ok())
+            .filter_map(parse_mapped_addr)
+            .collect();
+        assert!(!addrs.is_empty(), "{addrs:?}");
     })
 }
 
@@ -160,12 +167,11 @@ async fn send_bind_request_over_tcp() {
                 .any(|result| matches!(result, Ok(Response::Success(_)))),
             "{results:?}"
         );
-        assert!(
-            results
-                .into_iter()
-                .filter_map(|result| result.ok())
-                .any(|mut result| parse_mapped_addr(&mut result).is_some()),
-            "no mapped address in the responses"
-        );
+        let addrs: Vec<_> = results
+            .into_iter()
+            .filter_map(|result| result.ok())
+            .filter_map(parse_mapped_addr)
+            .collect();
+        assert!(!addrs.is_empty(), "{addrs:?}");
     })
 }
