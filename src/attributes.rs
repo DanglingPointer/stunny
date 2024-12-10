@@ -172,6 +172,21 @@ impl Attribute for XorMappedAddress {
     }
 }
 
+#[derive(Debug)]
+pub struct ResponseOrigin(pub SocketAddr);
+
+impl Attribute for ResponseOrigin {
+    const ID: u16 = 0x802b;
+
+    fn encode_value(self) -> Vec<u8> {
+        encode_socket_addr(self.0)
+    }
+
+    fn decode_value(tlv_value: Vec<u8>) -> Result<Self, ParseError> {
+        Ok(Self(decode_socket_addr(tlv_value, "RESPONSE-ORIGIN")?))
+    }
+}
+
 pub struct Software(pub String);
 
 impl Attribute for Software {
