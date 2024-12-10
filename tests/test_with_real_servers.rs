@@ -2,13 +2,13 @@ use futures::StreamExt;
 use local_async_utils::{local_sync, millisec, sec};
 use std::collections::HashSet;
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 use stunny::attributes::{AttributeCollection, MappedAddress, XorMappedAddress};
 use stunny::transactions::*;
 use stunny::transport::tcp::setup_tcp;
 use stunny::transport::udp::setup_udp;
-use tokio::net::{TcpSocket, UdpSocket};
+use tokio::net::{lookup_host, TcpSocket, UdpSocket};
 use tokio::{join, task, time};
 
 macro_rules! local_test {
@@ -34,16 +34,16 @@ const TCP_SERVERS: [&str; 3] = [
     "stun:stun.sipnet.ru:3478",
 ];
 
-fn parse_server_addrs<'a>(
+async fn parse_server_addrs<'a>(
     urls: impl IntoIterator<Item = &'a str> + 'a,
-) -> impl Iterator<Item = SocketAddr> + 'a {
-    urls.into_iter()
-        .filter_map(|url| url.strip_prefix("stun:"))
-        .filter_map(|arg| arg.to_socket_addrs().ok())
-        .flatten()
-        .filter(SocketAddr::is_ipv4)
-        .collect::<HashSet<_>>()
-        .into_iter()
+) -> HashSet<SocketAddr> {
+    let mut ret = HashSet::new();
+    for host in urls.into_iter().filter_map(|url| url.strip_prefix("stun:")) {
+        if let Ok(addrs) = lookup_host(host).await {
+            ret.extend(addrs.filter(SocketAddr::is_ipv4));
+        }
+    }
+    ret
 }
 
 async fn do_bind_request(
@@ -57,23 +57,22 @@ async fn do_bind_request(
     result_sender.send(result);
 }
 
-fn parse_mapped_addr(response: Response) -> Option<SocketAddr> {
-    match response {
-        Response::Success(mut attributes) => {
-            let mapped_addr = attributes.extract::<MappedAddress>();
-            let xor_mapped_addr = attributes.extract::<XorMappedAddress>();
-            println!("MAPPED-ADDR: {mapped_addr:?}, XOR-MAPPED-ADDR: {xor_mapped_addr:?}");
-            match (mapped_addr, xor_mapped_addr) {
-                (Ok(MappedAddress(mapped)), Ok(XorMappedAddress(xor_mapped))) => {
-                    assert_eq!(mapped, xor_mapped);
-                    Some(mapped)
-                }
-                (Ok(MappedAddress(mapped)), Err(_)) => Some(mapped),
-                (Err(_), Ok(XorMappedAddress(xor_mapped))) => Some(xor_mapped),
-                (Err(_), Err(_)) => None,
+fn parse_mapped_addr(mut response: Response) -> Option<SocketAddr> {
+    if response.success {
+        let mapped_addr = response.attributes.extract::<MappedAddress>();
+        let xor_mapped_addr = response.attributes.extract::<XorMappedAddress>();
+        println!("MAPPED-ADDR: {mapped_addr:?}, XOR-MAPPED-ADDR: {xor_mapped_addr:?}");
+        match (mapped_addr, xor_mapped_addr) {
+            (Ok(MappedAddress(mapped)), Ok(XorMappedAddress(xor_mapped))) => {
+                assert_eq!(mapped, xor_mapped);
+                Some(mapped)
             }
+            (Ok(MappedAddress(mapped)), Err(_)) => Some(mapped),
+            (Err(_), Ok(XorMappedAddress(xor_mapped))) => Some(xor_mapped),
+            (Err(_), Err(_)) => None,
         }
-        Response::Error(_) => None,
+    } else {
+        None
     }
 }
 
@@ -101,7 +100,7 @@ async fn send_bind_request_over_udp() {
 
         let (result_sender, result_receiver) = local_sync::channel();
 
-        for addr in parse_server_addrs(UDP_SERVERS) {
+        for addr in parse_server_addrs(UDP_SERVERS).await {
             task::spawn_local(do_bind_request(
                 request_sender.clone(),
                 addr,
@@ -114,7 +113,7 @@ async fn send_bind_request_over_udp() {
         assert!(
             results
                 .iter()
-                .any(|result| matches!(result, Ok(Response::Success(_)))),
+                .any(|result| matches!(result, Ok(response) if response.success)),
             "{results:?}"
         );
         let addrs: Vec<_> = results
@@ -151,7 +150,7 @@ async fn send_bind_request_over_tcp() {
 
         let (result_sender, result_receiver) = local_sync::channel();
 
-        for addr in parse_server_addrs(TCP_SERVERS) {
+        for addr in parse_server_addrs(TCP_SERVERS).await {
             task::spawn_local(do_bind_request(
                 request_sender.clone(),
                 addr,
@@ -164,7 +163,7 @@ async fn send_bind_request_over_tcp() {
         assert!(
             results
                 .iter()
-                .any(|result| matches!(result, Ok(Response::Success(_)))),
+                .any(|result| matches!(result, Ok(response) if response.success)),
             "{results:?}"
         );
         let addrs: Vec<_> = results

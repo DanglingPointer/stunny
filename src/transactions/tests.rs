@@ -68,7 +68,8 @@ fn single_outgoing_request() {
     assert!(request_fut.is_woken());
     let result = assert_ready!(request_fut.poll());
     let response = result.unwrap();
-    assert!(matches!(response, Response::Success(attributes) if attributes == vec![attribute()]));
+    assert!(response.success);
+    assert_eq!(response.attributes, vec![attribute()]);
 }
 
 #[test]
@@ -127,7 +128,8 @@ fn concurrent_outgoing_requests() {
     assert!(request2_fut.is_woken());
     let result = assert_ready!(request2_fut.poll());
     let response2 = result.unwrap();
-    assert!(matches!(response2, Response::Success(attributes) if attributes == vec![attribute()]));
+    assert!(response2.success);
+    assert_eq!(response2.attributes, vec![attribute()]);
 
     // when
     let response1 = Message::error(
@@ -143,7 +145,8 @@ fn concurrent_outgoing_requests() {
     assert!(request1_fut.is_woken());
     let result = assert_ready!(request1_fut.poll());
     let response1 = result.unwrap();
-    assert!(matches!(response1, Response::Error(attributes) if attributes == vec![attribute()]));
+    assert!(!response1.success);
+    assert_eq!(response1.attributes, vec![attribute()]);
 }
 
 #[tokio::test(start_paused = true)]

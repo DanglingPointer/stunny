@@ -219,11 +219,11 @@ impl<P: RtoPolicy> Manager<P> {
                         response_method,
                     })
                 } else {
-                    match message.header.class {
-                        Class::Response => Ok(Response::Success(message.attributes)),
-                        Class::Error => Ok(Response::Error(message.attributes)),
-                        Class::Request | Class::Indication => unreachable!(),
-                    }
+                    Ok(Response {
+                        success: matches!(message.header.class, Class::Response),
+                        attributes: message.attributes,
+                        time_elapsed: request.start_time.elapsed(),
+                    })
                 };
                 let _ = request.response_sink.send(result);
             }
