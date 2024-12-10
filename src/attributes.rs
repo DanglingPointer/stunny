@@ -187,6 +187,7 @@ impl Attribute for ResponseOrigin {
     }
 }
 
+#[derive(Debug)]
 pub struct Software(pub String);
 
 impl Attribute for Software {
