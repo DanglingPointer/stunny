@@ -1,12 +1,15 @@
 use super::*;
 use derive_more::Debug;
-use std::net::SocketAddr;
 use std::rc::Rc;
+use std::{net::SocketAddr, time::Duration};
 use tokio::sync::{mpsc, oneshot, Semaphore};
 
 #[derive(Debug)]
 pub enum Response {
-    Success(Vec<Tlv>),
+    Success {
+        attributes: Vec<Tlv>,
+        time: Duration,
+    },
     Error(Vec<Tlv>),
 }
 

@@ -59,7 +59,7 @@ async fn do_bind_request(
 
 fn parse_mapped_addr(response: Response) -> Option<SocketAddr> {
     match response {
-        Response::Success(mut attributes) => {
+        Response::Success { mut attributes, .. } => {
             let mapped_addr = attributes.extract::<MappedAddress>();
             let xor_mapped_addr = attributes.extract::<XorMappedAddress>();
             println!("MAPPED-ADDR: {mapped_addr:?}, XOR-MAPPED-ADDR: {xor_mapped_addr:?}");
@@ -114,7 +114,7 @@ async fn send_bind_request_over_udp() {
         assert!(
             results
                 .iter()
-                .any(|result| matches!(result, Ok(Response::Success(_)))),
+                .any(|result| matches!(result, Ok(Response::Success{..}))),
             "{results:?}"
         );
         let addrs: Vec<_> = results
@@ -164,7 +164,7 @@ async fn send_bind_request_over_tcp() {
         assert!(
             results
                 .iter()
-                .any(|result| matches!(result, Ok(Response::Success(_)))),
+                .any(|result| matches!(result, Ok(Response::Success{..}))),
             "{results:?}"
         );
         let addrs: Vec<_> = results

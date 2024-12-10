@@ -220,7 +220,10 @@ impl<P: RtoPolicy> Manager<P> {
                     })
                 } else {
                     match message.header.class {
-                        Class::Response => Ok(Response::Success(message.attributes)),
+                        Class::Response => Ok(Response::Success {
+                            attributes: message.attributes,
+                            time: request.start_time.elapsed(),
+                        }),
                         Class::Error => Ok(Response::Error(message.attributes)),
                         Class::Request | Class::Indication => unreachable!(),
                     }

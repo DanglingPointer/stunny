@@ -68,7 +68,9 @@ fn single_outgoing_request() {
     assert!(request_fut.is_woken());
     let result = assert_ready!(request_fut.poll());
     let response = result.unwrap();
-    assert!(matches!(response, Response::Success(attributes) if attributes == vec![attribute()]));
+    assert!(
+        matches!(response, Response::Success{attributes, ..} if attributes == vec![attribute()])
+    );
 }
 
 #[test]
@@ -127,7 +129,9 @@ fn concurrent_outgoing_requests() {
     assert!(request2_fut.is_woken());
     let result = assert_ready!(request2_fut.poll());
     let response2 = result.unwrap();
-    assert!(matches!(response2, Response::Success(attributes) if attributes == vec![attribute()]));
+    assert!(
+        matches!(response2, Response::Success{attributes, ..} if attributes == vec![attribute()])
+    );
 
     // when
     let response1 = Message::error(
