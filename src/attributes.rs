@@ -16,11 +16,11 @@ pub struct ParseError {
 impl ParseError {
     pub fn new<E>(name: &'static str, error: E) -> Self
     where
-        E: Error + Send + Sync + 'static,
+        E: Into<Box<dyn Error + Send + Sync + 'static>>,
     {
         Self {
             attribute_name: name,
-            inner: Box::new(error),
+            inner: error.into(),
         }
     }
 }
@@ -70,6 +70,75 @@ impl AttributeCollection for Vec<Tlv> {
 
 // ------------------------------------------------------------------------------------------------
 
+pub fn encode_socket_addr(addr: SocketAddr) -> Vec<u8> {
+    let mut value = Vec::new();
+    value.put_u8(0);
+    match addr {
+        SocketAddr::V4(addr) => {
+            value.put_u8(0x01);
+            value.put_u16(addr.port());
+            value.put_slice(&addr.ip().octets());
+        }
+        SocketAddr::V6(addr) => {
+            value.put_u8(0x02);
+            value.put_u16(addr.port());
+            value.put_slice(&addr.ip().octets());
+        }
+    }
+    value
+}
+
+pub fn decode_socket_addr(
+    tlv_value: Vec<u8>,
+    attribute_name: &'static str,
+) -> Result<SocketAddr, ParseError> {
+    macro_rules! parse_error {
+        ($what:expr) => {
+            ParseError::new(attribute_name, $what)
+        };
+    }
+
+    let mut buffer = tlv_value.as_slice();
+
+    if buffer.remaining() < 4 {
+        return Err(parse_error!("buffer too short"));
+    }
+
+    if buffer.get_u8() != 0x00 {
+        return Err(parse_error!("incorrect prefix byte"));
+    }
+
+    let family = buffer.get_u8();
+    let port = buffer.get_u16();
+
+    let ip = match family {
+        0x01 => {
+            if buffer.remaining() < 4 {
+                return Err(parse_error!("not enough bytes for IPv4 address"));
+            }
+            let mut octets = [0u8; 4];
+            buffer.copy_to_slice(octets.as_mut_slice());
+            IpAddr::V4(Ipv4Addr::from(octets))
+        }
+        0x02 => {
+            if buffer.remaining() < 16 {
+                return Err(parse_error!("not enough bytes for IPv6 address"));
+            }
+            let mut octets = [0u8; 16];
+            buffer.copy_to_slice(octets.as_mut_slice());
+            IpAddr::V6(Ipv6Addr::from(octets))
+        }
+        _ => {
+            return Err(parse_error!(format!(
+                "unexpected ip version {:#04x}",
+                family
+            )));
+        }
+    };
+
+    Ok(SocketAddr::new(ip, port))
+}
+
 #[derive(Debug)]
 pub struct MappedAddress(pub SocketAddr);
 
@@ -77,70 +146,11 @@ impl Attribute for MappedAddress {
     const ID: u16 = 0x0001;
 
     fn encode_value(self) -> Vec<u8> {
-        let mut value = Vec::new();
-        value.put_u8(0);
-        match self.0 {
-            SocketAddr::V4(addr) => {
-                value.put_u8(0x01);
-                value.put_u16(addr.port());
-                value.put_slice(&addr.ip().octets());
-            }
-            SocketAddr::V6(addr) => {
-                value.put_u8(0x02);
-                value.put_u16(addr.port());
-                value.put_slice(&addr.ip().octets());
-            }
-        }
-        value
+        encode_socket_addr(self.0)
     }
 
     fn decode_value(tlv_value: Vec<u8>) -> Result<Self, ParseError> {
-        fn parse_error(what: impl ToString) -> ParseError {
-            ParseError {
-                attribute_name: "MAPPED-ADDRESS",
-                inner: what.to_string().into(),
-            }
-        }
-
-        let mut buffer = tlv_value.as_slice();
-
-        if buffer.remaining() < 4 {
-            return Err(parse_error("buffer too short"));
-        }
-
-        if buffer.get_u8() != 0x00 {
-            return Err(parse_error("incorrect prefix byte"));
-        }
-
-        let family = buffer.get_u8();
-        let port = buffer.get_u16();
-
-        let ip = match family {
-            0x01 => {
-                if buffer.remaining() < 4 {
-                    return Err(parse_error("not enough bytes for IPv4 address"));
-                }
-                let mut octets = [0u8; 4];
-                buffer.copy_to_slice(octets.as_mut_slice());
-                IpAddr::V4(Ipv4Addr::from(octets))
-            }
-            0x02 => {
-                if buffer.remaining() < 16 {
-                    return Err(parse_error("not enough bytes for IPv6 address"));
-                }
-                let mut octets = [0u8; 16];
-                buffer.copy_to_slice(octets.as_mut_slice());
-                IpAddr::V6(Ipv6Addr::from(octets))
-            }
-            _ => {
-                return Err(parse_error(format!(
-                    "unexpected ip version {:#04x}",
-                    family
-                )));
-            }
-        };
-
-        Ok(Self(SocketAddr::new(ip, port)))
+        Ok(Self(decode_socket_addr(tlv_value, "MAPPED-ADDRESS")?))
     }
 }
 
@@ -154,17 +164,11 @@ impl Attribute for XorMappedAddress {
     const ID: u16 = 0x0020;
 
     fn encode_value(self) -> Vec<u8> {
-        MappedAddress(self.0).encode_value()
+        encode_socket_addr(self.0)
     }
 
     fn decode_value(tlv_value: Vec<u8>) -> Result<Self, ParseError> {
-        match MappedAddress::decode_value(tlv_value) {
-            Ok(MappedAddress(addr)) => Ok(XorMappedAddress(addr)),
-            Err(ParseError { inner, .. }) => Err(ParseError {
-                attribute_name: "XOR-MAPPED-ADDRESS",
-                inner,
-            }),
-        }
+        Ok(Self(decode_socket_addr(tlv_value, "XOR-MAPPED-ADDRESS")?))
     }
 }
 
