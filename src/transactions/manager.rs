@@ -196,11 +196,7 @@ impl<P: RtoPolicy> Manager<P> {
                     .outstanding_requests
                     .remove(&message.header.transaction_id)
                 {
-                    Some(request) if request.destination_addr == source_addr => request,
-                    Some(_) => {
-                        log::warn!("Received response from unexpected source {source_addr}");
-                        return Ok(());
-                    }
+                    Some(request) => request,
                     None => {
                         log::warn!("Received orphaned response from {source_addr}");
                         return Ok(());
