@@ -1,3 +1,4 @@
+use std::io;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
@@ -16,6 +17,9 @@ pub enum TransactionError {
         request_method: u16,
         response_method: u16,
     },
+
+    #[error(transparent)]
+    Io(#[from] io::Error),
 }
 
 impl<T> From<mpsc::error::SendError<T>> for TransactionError {

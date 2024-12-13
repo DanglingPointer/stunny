@@ -7,6 +7,7 @@ use tokio::select;
 use tokio::sync::mpsc;
 use tokio::time::{sleep_until, Instant};
 
+mod dns;
 mod error;
 mod interface;
 mod manager;

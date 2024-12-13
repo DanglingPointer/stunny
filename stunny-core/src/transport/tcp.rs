@@ -131,7 +131,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_and_receive_with_single_connection() {
-        local_test!({
+        local_test! {
             let mut channels = setup();
             let farend_addr = local_addr(7000);
             let accept_task = task::spawn_local(accept(farend_addr));
@@ -156,12 +156,12 @@ mod tests {
                 .await
                 .unwrap();
             verify_egress!(farend_sock, BIND_INDICATION_BYTES);
-        });
+        }
     }
 
     #[tokio::test]
     async fn multiple_concurrenct_connections() {
-        local_test!({
+        local_test! {
             let mut channels = setup();
             let farend1_addr = local_addr(7001);
             let farend2_addr = local_addr(7002);
@@ -199,7 +199,7 @@ mod tests {
             assert_eq!(message, bind_indication_msg());
 
             assert!(channels.ingress_source.try_recv().is_err());
-        });
+        }
     }
 
     #[tokio::test]
@@ -207,7 +207,7 @@ mod tests {
         let _ = simple_logger::SimpleLogger::new()
             .with_level(log::LevelFilter::Trace)
             .init();
-        local_test!({
+        local_test! {
             let channels = setup();
             let farend_addr = local_addr(7003);
             let accept_task = task::spawn_local(accept(farend_addr));
@@ -231,7 +231,7 @@ mod tests {
                 .unwrap();
             let mut farend_sock = accept_task.await.unwrap();
             verify_egress!(farend_sock, BIND_INDICATION_BYTES);
-        });
+        }
     }
 
     #[tokio::test]
@@ -239,7 +239,7 @@ mod tests {
         let _ = simple_logger::SimpleLogger::new()
             .with_level(log::LevelFilter::Trace)
             .init();
-        local_test!({
+        local_test! {
             let mut channels = setup();
             let farend_addr = local_addr(7004);
             let accept_task = task::spawn_local(accept(farend_addr));
@@ -264,7 +264,7 @@ mod tests {
                 .unwrap();
             let mut farend_sock = accept_task.await.unwrap();
             verify_egress!(farend_sock, BIND_INDICATION_BYTES);
-        });
+        }
     }
 
     #[tokio::test]
@@ -272,7 +272,7 @@ mod tests {
         let _ = simple_logger::SimpleLogger::new()
             .with_level(log::LevelFilter::Trace)
             .init();
-        local_test!({
+        local_test! {
             let (mut channels, pool) = setup_tcp(1, Duration::from_secs(1), new_socket);
             task::spawn_local(pool.run());
 
@@ -293,6 +293,6 @@ mod tests {
 
             farend_sock.write_all(&BIND_RESPONSE_BYTES).await.unwrap();
             verify_ingress!(channels, bind_response_msg(), farend_addr);
-        });
+        }
     }
 }

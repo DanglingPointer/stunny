@@ -1,5 +1,6 @@
 use super::*;
 use derive_more::Debug;
+use std::io;
 use std::rc::Rc;
 use std::{net::SocketAddr, time::Duration};
 use tokio::sync::{mpsc, oneshot, Semaphore};
@@ -49,6 +50,61 @@ impl RequestSender {
             .await?;
         let response = rx.await.map_err(|_e| TransactionError::Timeout)??;
         Ok(response)
+    }
+
+    async fn send_request_to_addrs(
+        &self,
+        addrs: impl IntoIterator<Item = SocketAddr>,
+        method: u16,
+        attributes: Vec<Tlv>,
+    ) -> Result<Response, TransactionError> {
+        for addr in addrs {
+            match self.send_request(addr, method, attributes.clone()).await {
+                Err(TransactionError::Timeout) => continue,
+                result => return result,
+            }
+        }
+        Err(TransactionError::Timeout)
+    }
+}
+
+pub struct CompositeRequestSender {
+    pub udp: RequestSender,
+    pub tcp: RequestSender,
+    pub tls: Option<RequestSender>,
+}
+
+impl CompositeRequestSender {
+    pub async fn udp_request<U: AsRef<str>>(
+        &self,
+        stun_uri: U,
+        method: u16,
+        attributes: Vec<Tlv>,
+    ) -> Result<Response, TransactionError> {
+        let addrs = dns::resolve_uri(stun_uri).await?;
+        self.udp
+            .send_request_to_addrs(addrs, method, attributes)
+            .await
+    }
+
+    pub async fn tcp_request<U: AsRef<str>>(
+        &self,
+        stun_uri: U,
+        method: u16,
+        attributes: Vec<Tlv>,
+    ) -> Result<Response, TransactionError> {
+        if let Ok(addrs) = dns::resolve_uri(stun_uri.as_ref()).await {
+            return self
+                .tcp
+                .send_request_to_addrs(addrs, method, attributes)
+                .await;
+        }
+        if let Some(tls) = self.tls.as_ref() {
+            if let Ok(addrs) = dns::resolve_secure_uri(stun_uri.as_ref()).await {
+                return tls.send_request_to_addrs(addrs, method, attributes).await;
+            }
+        }
+        Err(io::Error::from(io::ErrorKind::HostUnreachable).into())
     }
 }
 
