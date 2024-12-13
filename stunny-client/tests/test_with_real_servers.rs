@@ -4,10 +4,10 @@ use std::collections::HashSet;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
-use stunny::attributes::{AttributeCollection, MappedAddress, XorMappedAddress};
-use stunny::transactions::*;
-use stunny::transport::tcp::setup_tcp;
-use stunny::transport::udp::setup_udp;
+use stunny_client::*;
+use stunny_core::attributes::{AttributeCollection, MappedAddress, XorMappedAddress};
+use stunny_core::transport::tcp::setup_tcp;
+use stunny_core::transport::udp::setup_udp;
 use tokio::net::{lookup_host, TcpSocket, UdpSocket};
 use tokio::{join, task, time};
 

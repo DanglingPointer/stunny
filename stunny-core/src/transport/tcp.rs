@@ -1,6 +1,5 @@
 use super::connection_pool::*;
-use super::message::*;
-use super::MessageChannels;
+use super::*;
 use std::io;
 use std::net::SocketAddr;
 use std::rc::Rc;

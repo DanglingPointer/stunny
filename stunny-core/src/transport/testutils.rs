@@ -1,4 +1,4 @@
-use super::message::*;
+use super::*;
 
 #[rustfmt::skip]
 pub(super) const BIND_REQUEST_BYTES: [u8; 28] = [

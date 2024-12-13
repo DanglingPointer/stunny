@@ -1,5 +1,4 @@
-use super::message::*;
-use super::MessageChannels;
+use super::*;
 use bytes::{Buf, BufMut};
 use std::future::Future;
 use std::io;

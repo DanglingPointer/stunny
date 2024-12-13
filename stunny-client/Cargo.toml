@@ -1,0 +1,29 @@
+[package]
+name = "stunny-client"
+version = "0.1.0"
+edition = "2021"
+authors = ["Mikhail Vasilyev"]
+description = "STUN client functionality"
+repository = "https://github.com/DanglingPointer/stunny"
+license = "Apache-2.0"
+
+[dependencies]
+log = { workspace = true }
+thiserror = { workspace = true }
+derive_more = { workspace = true, features = ["debug"] }
+stunny-core = { path = "../stunny-core", default-features = false }
+rand = "0.8.5"
+tokio = { version = "1.42.0", default-features = false, features = [
+    "sync",
+    "macros",
+    "time",
+] }
+
+[dev-dependencies]
+simple_logger = { version = "5.0.0" }
+tokio-test = "0.4.4"
+futures = "0.3.31"
+local_async_utils = { git = "https://github.com/DanglingPointer/local_async_utils.git", tag = "v0.1.0", features = [
+    "tokio-time",
+] }
+stunny-core = { path = "../stunny-core", default-features = true }

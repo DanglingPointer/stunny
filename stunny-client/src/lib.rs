@@ -1,7 +1,8 @@
-use crate::transport::{message::*, MessageChannels};
 use manager::{Manager, Request};
 use std::future::pending;
 use std::net::SocketAddr;
+use stunny_core::message::*;
+use stunny_core::transport::MessageChannels;
 use tokio::select;
 use tokio::sync::mpsc;
 use tokio::time::{sleep_until, Instant};

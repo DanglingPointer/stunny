@@ -1,8 +1,9 @@
+use crate::attributes::{Attribute, XorMappedAddress};
 use bitvec::prelude::*;
 use bytes::{Buf, BufMut};
 use derive_more::Debug;
 use std::borrow::Cow;
-use std::io;
+use std::{io, iter};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -48,6 +49,48 @@ pub struct Tlv {
     #[debug("{attribute_type:#06x}")]
     pub attribute_type: u16,
     pub value: Vec<u8>,
+}
+
+/// Convert values of all XOR-MAPPED-ADDRESS attributes to MAPPED-ADDRESS
+pub fn convert_xor_mapped_addr(mut msg: Message) -> Message {
+    let tid = msg.header.transaction_id;
+    for tlv in &mut msg.attributes {
+        if tlv.attribute_type != XorMappedAddress::ID {
+            continue;
+        }
+        if let Some(port_bytes) = tlv.value.get_mut(2..4) {
+            port_bytes[0] ^= 0x21;
+            port_bytes[1] ^= 0x12;
+        }
+        if let Some(family) = tlv.value.get(1) {
+            match *family {
+                0x01 => {
+                    // IPv4
+                    if let Some(addr_bytes) = tlv.value.get_mut(4..8) {
+                        let xored_with = MAGIC_COOKIE.to_be_bytes();
+
+                        for (lhs, rhs) in iter::zip(addr_bytes, xored_with) {
+                            *lhs ^= rhs;
+                        }
+                    }
+                }
+                0x02 => {
+                    // IPv6
+                    if let Some(addr_bytes) = tlv.value.get_mut(4..20) {
+                        let mut xored_with = [0u8; 16];
+                        xored_with[0..4].copy_from_slice(MAGIC_COOKIE.to_be_bytes().as_slice());
+                        xored_with[4..].copy_from_slice(tid.as_slice());
+
+                        for (lhs, rhs) in iter::zip(addr_bytes, xored_with) {
+                            *lhs ^= rhs;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    msg
 }
 
 macro_rules! ceil_mul_4 {

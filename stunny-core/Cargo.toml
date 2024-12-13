@@ -1,0 +1,42 @@
+[package]
+name = "stunny-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["Mikhail Vasilyev"]
+description = "STUN message parsing and transport protocols"
+repository = "https://github.com/DanglingPointer/stunny"
+license = "Apache-2.0"
+
+[features]
+default = ["udp", "tcp"]
+udp = []
+tcp = []
+tls = ["dep:tokio-rustls"]
+
+[dependencies]
+log = { workspace = true }
+thiserror = { workspace = true }
+derive_more = { workspace = true, features = ["debug"] }
+bitvec = { version = "1.0.1", default-features = false, features = ["alloc"] }
+bytes = "1.9.0"
+futures-util = { version = "0.3.31", default-features = false }
+tokio = { version = "1.42.0", default-features = false, features = [
+    "net",
+    "sync",
+    "io-util",
+    "macros",
+    "rt",
+    "time",
+] }
+tokio-rustls = { version = "0.26.1", default-features = false, optional = true, features = [
+    "tls12",
+    "aws_lc_rs",
+] }
+
+[dev-dependencies]
+simple_logger = { version = "5.0.0" }
+tokio-test = "0.4.4"
+futures = "0.3.31"
+local_async_utils = { git = "https://github.com/DanglingPointer/local_async_utils.git", tag = "v0.1.0", features = [
+    "tokio-time",
+] }

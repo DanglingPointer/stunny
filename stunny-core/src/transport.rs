@@ -1,12 +1,10 @@
-use message::Message;
+use crate::message::*;
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
 
 #[cfg(test)]
 #[macro_use]
 mod testutils;
-
-pub mod message;
 
 #[cfg(any(feature = "tcp", feature = "tls"))]
 mod connection_pool;
