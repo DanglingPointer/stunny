@@ -1,4 +1,3 @@
-use crate::attributes::{Attribute, XorMappedAddress};
 use bitvec::prelude::*;
 use bytes::{Buf, BufMut};
 use derive_more::Debug;
@@ -49,48 +48,6 @@ pub struct Tlv {
     #[debug("{attribute_type:#06x}")]
     pub attribute_type: u16,
     pub value: Vec<u8>,
-}
-
-/// Convert values of all XOR-MAPPED-ADDRESS attributes to MAPPED-ADDRESS
-pub fn convert_xor_mapped_addr(mut msg: Message) -> Message {
-    let tid = msg.header.transaction_id;
-    for tlv in &mut msg.attributes {
-        if tlv.attribute_type != XorMappedAddress::ID {
-            continue;
-        }
-        if let Some(port_bytes) = tlv.value.get_mut(2..4) {
-            port_bytes[0] ^= 0x21;
-            port_bytes[1] ^= 0x12;
-        }
-        if let Some(family) = tlv.value.get(1) {
-            match *family {
-                0x01 => {
-                    // IPv4
-                    if let Some(addr_bytes) = tlv.value.get_mut(4..8) {
-                        let xored_with = MAGIC_COOKIE.to_be_bytes();
-
-                        for (lhs, rhs) in iter::zip(addr_bytes, xored_with) {
-                            *lhs ^= rhs;
-                        }
-                    }
-                }
-                0x02 => {
-                    // IPv6
-                    if let Some(addr_bytes) = tlv.value.get_mut(4..20) {
-                        let mut xored_with = [0u8; 16];
-                        xored_with[0..4].copy_from_slice(MAGIC_COOKIE.to_be_bytes().as_slice());
-                        xored_with[4..].copy_from_slice(tid.as_slice());
-
-                        for (lhs, rhs) in iter::zip(addr_bytes, xored_with) {
-                            *lhs ^= rhs;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    msg
 }
 
 macro_rules! ceil_mul_4 {
@@ -148,6 +105,46 @@ impl Message {
         }
     }
 
+    /// Convert values of all XOR-MAPPED-ADDRESS (or similar) attributes to MAPPED-ADDRESS
+    pub fn xor_socket_addr(mut self, xored_attribute_id: u16) -> Self {
+        let tid = self.header.transaction_id;
+        for tlv in &mut self.attributes {
+            if tlv.attribute_type != xored_attribute_id {
+                continue;
+            }
+            if let Some(port_bytes) = tlv.value.get_mut(2..4) {
+                port_bytes[0] ^= MAGIC_COOKIE[0];
+                port_bytes[1] ^= MAGIC_COOKIE[1];
+            }
+            if let Some(family) = tlv.value.get(1) {
+                match *family {
+                    0x01 => {
+                        // IPv4
+                        if let Some(addr_bytes) = tlv.value.get_mut(4..8) {
+                            for (lhs, rhs) in iter::zip(addr_bytes, MAGIC_COOKIE) {
+                                *lhs ^= rhs;
+                            }
+                        }
+                    }
+                    0x02 => {
+                        // IPv6
+                        if let Some(addr_bytes) = tlv.value.get_mut(4..20) {
+                            let mut xored_with = [0u8; 16];
+                            xored_with[0..4].copy_from_slice(MAGIC_COOKIE.as_slice());
+                            xored_with[4..].copy_from_slice(tid.as_slice());
+
+                            for (lhs, rhs) in iter::zip(addr_bytes, xored_with) {
+                                *lhs ^= rhs;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self
+    }
+
     fn calculate_len<'t>(attributes: impl IntoIterator<Item = &'t Tlv>) -> u16 {
         let len: usize = attributes
             .into_iter()
@@ -163,14 +160,14 @@ pub trait EncodeDecode: Sized {
     fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), io::Error>;
 }
 
-pub(crate) const MAGIC_COOKIE: u32 = 0x2112A442;
+const MAGIC_COOKIE: [u8; 4] = [0x21, 0x12, 0xA4, 0x42];
 
 impl Header {
-    pub(super) const SIZE: usize = 20;
+    pub const SIZE: usize = 20;
 }
 
 impl Tlv {
-    pub(super) const HEADER_SIZE: usize = 4;
+    pub const HEADER_SIZE: usize = 4;
 }
 
 impl EncodeDecode for Header {
@@ -183,7 +180,11 @@ impl EncodeDecode for Header {
 
         let method_class_bytes = buffer.get_u16();
         let length = buffer.get_u16();
-        let magic_cookie = buffer.get_u32();
+        let magic_cookie = {
+            let mut tmp = [0u8; 4];
+            buffer.copy_to_slice(tmp.as_mut_slice());
+            tmp
+        };
 
         if magic_cookie != MAGIC_COOKIE {
             return Err("incorrect magic cookie".into());
@@ -246,7 +247,7 @@ impl EncodeDecode for Header {
         buffer.put_u16(method_class_bits.data);
 
         buffer.put_u16(self.length);
-        buffer.put_u32(MAGIC_COOKIE);
+        buffer.put_slice(MAGIC_COOKIE.as_slice());
         buffer.put_slice(&self.transaction_id);
 
         Ok(())

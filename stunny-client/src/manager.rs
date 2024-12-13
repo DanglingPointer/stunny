@@ -7,6 +7,7 @@ use std::collections::{BinaryHeap, HashMap};
 use std::mem;
 use std::net::SocketAddr;
 use std::time::Duration;
+use stunny_core::attributes::{Attribute, XorMappedAddress};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
@@ -121,11 +122,8 @@ impl<P: RtoPolicy> Manager<P> {
         indication: Indication,
     ) -> Result<(), TransactionError> {
         let tid = self.rand_gen.gen::<TransactionId>();
-        let msg = convert_xor_mapped_addr(Message::indication(
-            indication.method,
-            tid,
-            indication.attributes,
-        ));
+        let msg = Message::indication(indication.method, tid, indication.attributes)
+            .xor_socket_addr(XorMappedAddress::ID);
         log::trace!("Sending indication to {:?}", indication.farend_addr);
         self.egress_sink.send((msg, indication.farend_addr)).await?;
         Ok(())
@@ -136,11 +134,8 @@ impl<P: RtoPolicy> Manager<P> {
         mut request: Request,
     ) -> Result<(), TransactionError> {
         let tid = self.rand_gen.gen::<TransactionId>();
-        let msg = convert_xor_mapped_addr(Message::request(
-            request.method,
-            tid,
-            mem::take(&mut request.attributes),
-        ));
+        let msg = Message::request(request.method, tid, mem::take(&mut request.attributes))
+            .xor_socket_addr(XorMappedAddress::ID);
         request.attributes = msg.attributes.clone();
         log::trace!("Sending request to {:?}", request.destination_addr);
         match self.egress_sink.send((msg, request.destination_addr)).await {
@@ -174,7 +169,7 @@ impl<P: RtoPolicy> Manager<P> {
         &mut self,
         (message, source_addr): (Message, SocketAddr),
     ) -> Result<(), TransactionError> {
-        let message = convert_xor_mapped_addr(message);
+        let message = message.xor_socket_addr(XorMappedAddress::ID);
         match message.header.class {
             Class::Request => {
                 log::error!("Ignoring incoming request: handling of requests is not supported");
