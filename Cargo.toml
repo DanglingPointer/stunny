@@ -1,5 +1,5 @@
 [workspace]
-members = ["stunny-core", "stunny-client"]
+members = ["stunny-core", "stunny-client", "stunny-server"]
 resolver = "2"
 
 [profile.dev]
@@ -9,6 +9,9 @@ opt-level = 3
 log = "0.4.22"
 thiserror = "2.0.7"
 derive_more = { version = "1.0.0" }
+futures-util = { version = "0.3.31", default-features = false }
 local_async_utils = { git = "https://github.com/DanglingPointer/local_async_utils.git", tag = "v0.1.0", features = [
     "tokio-time",
 ] }
+simple_logger = { version = "5.0.0" }
+tokio-test = "0.4.4"

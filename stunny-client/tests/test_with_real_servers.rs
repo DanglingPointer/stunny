@@ -60,7 +60,7 @@ async fn do_bind_request(
         macro_rules! print_attrs {
             ($( $attr_name:ident ),+) => {
                 $(
-                    if let Ok(attr_value) = attributes.extract::<$attr_name>() {
+                    if let Ok(attr_value) = attributes.extract_attribute::<$attr_name>() {
                         println!("{}: {:?}", stringify!($attr_name), attr_value);
                     }
                 )+
@@ -79,8 +79,8 @@ async fn do_bind_request(
 
 fn parse_mapped_addr(mut response: Response) -> Option<SocketAddr> {
     if response.success {
-        let mapped_addr = response.attributes.extract::<MappedAddress>();
-        let xor_mapped_addr = response.attributes.extract::<XorMappedAddress>();
+        let mapped_addr = response.attributes.extract_attribute::<MappedAddress>();
+        let xor_mapped_addr = response.attributes.extract_attribute::<XorMappedAddress>();
         match (mapped_addr, xor_mapped_addr) {
             (Ok(MappedAddress(mapped)), Ok(XorMappedAddress(xor_mapped))) => {
                 assert_eq!(mapped, xor_mapped);

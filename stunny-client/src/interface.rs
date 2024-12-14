@@ -1,7 +1,9 @@
 use super::*;
 use derive_more::Debug;
 use std::io;
+use std::pin::Pin;
 use std::rc::Rc;
+use std::task::{Context, Poll};
 use std::{net::SocketAddr, time::Duration};
 use tokio::sync::{mpsc, oneshot, Semaphore};
 
@@ -149,5 +151,13 @@ impl IndicationReceiver {
             .recv()
             .await
             .ok_or(TransactionError::ChannelClosed)
+    }
+}
+
+impl futures_util::Stream for IndicationReceiver {
+    type Item = Indication;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        self.source.poll_recv(cx)
     }
 }

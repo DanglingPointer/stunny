@@ -2,7 +2,7 @@
 name = "stunny-client"
 version = "0.1.0"
 edition = "2021"
-authors = ["Mikhail Vasilyev"]
+authors = ["Mikhail Vasilyev <mikail.vasilyev@gmail.com>"]
 description = "STUN client functionality"
 repository = "https://github.com/DanglingPointer/stunny"
 license = "Apache-2.0"
@@ -17,6 +17,7 @@ tls = ["stunny-core/tls"]
 log = { workspace = true }
 thiserror = { workspace = true }
 derive_more = { workspace = true, features = ["debug"] }
+futures-util = { workspace = true }
 stunny-core = { path = "../stunny-core", default-features = false }
 rand = "0.8.5"
 tokio = { version = "1.42.0", default-features = false, features = [
@@ -26,7 +27,7 @@ tokio = { version = "1.42.0", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-simple_logger = { version = "5.0.0" }
-tokio-test = "0.4.4"
+simple_logger = { workspace = true }
+tokio-test = { workspace = true }
 futures = "0.3.31"
 local_async_utils = { workspace = true }

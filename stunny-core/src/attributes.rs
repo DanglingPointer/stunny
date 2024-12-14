@@ -44,19 +44,19 @@ pub enum LookupError {
 }
 
 pub trait AttributeCollection {
-    fn append<A: Attribute>(&mut self, attribute: A);
-    fn extract<A: Attribute>(&mut self) -> Result<A, LookupError>;
+    fn append_attribute<A: Attribute>(&mut self, attribute: A);
+    fn extract_attribute<A: Attribute>(&mut self) -> Result<A, LookupError>;
 }
 
 impl AttributeCollection for Vec<Tlv> {
-    fn append<A: Attribute>(&mut self, attribute: A) {
+    fn append_attribute<A: Attribute>(&mut self, attribute: A) {
         self.push(Tlv {
             attribute_type: A::ID,
             value: attribute.encode_value(),
         });
     }
 
-    fn extract<A: Attribute>(&mut self) -> Result<A, LookupError> {
+    fn extract_attribute<A: Attribute>(&mut self) -> Result<A, LookupError> {
         let mut i = 0;
         while i < self.len() {
             if self[i].attribute_type == A::ID {
