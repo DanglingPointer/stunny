@@ -6,7 +6,7 @@ use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 use stunny_client::*;
-use stunny_core::attributes::{AttributeCollection, MappedAddress, XorMappedAddress};
+use stunny_core::attributes::*;
 use stunny_core::transport::tcp::setup_tcp;
 use stunny_core::transport::udp::setup_udp;
 use tokio::net::{lookup_host, TcpSocket, UdpSocket};
@@ -55,6 +55,25 @@ async fn do_bind_request(
     println!("Sending request to {:?}", addr);
     let result = request_sender.send_request(addr, 0x0001, vec![]).await;
     println!("Response from {}:\n{:?}", addr, result);
+    if let Ok(response) = &result {
+        let mut attributes = response.attributes.clone();
+        macro_rules! print_attrs {
+            ($( $attr_name:ident ),+) => {
+                $(
+                    if let Ok(attr_value) = attributes.extract::<$attr_name>() {
+                        println!("{}: {:?}", stringify!($attr_name), attr_value);
+                    }
+                )+
+            };
+        }
+        print_attrs!(
+            MappedAddress,
+            XorMappedAddress,
+            ResponseOrigin,
+            Software,
+            ErrorCode
+        );
+    }
     result_sender.send(result);
 }
 
@@ -62,7 +81,6 @@ fn parse_mapped_addr(mut response: Response) -> Option<SocketAddr> {
     if response.success {
         let mapped_addr = response.attributes.extract::<MappedAddress>();
         let xor_mapped_addr = response.attributes.extract::<XorMappedAddress>();
-        println!("MAPPED-ADDR: {mapped_addr:?}, XOR-MAPPED-ADDR: {xor_mapped_addr:?}");
         match (mapped_addr, xor_mapped_addr) {
             (Ok(MappedAddress(mapped)), Ok(XorMappedAddress(xor_mapped))) => {
                 assert_eq!(mapped, xor_mapped);

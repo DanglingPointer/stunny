@@ -201,3 +201,119 @@ impl Attribute for Software {
         Ok(Self(text.to_owned()))
     }
 }
+
+#[derive(Debug)]
+pub struct ErrorCode {
+    pub code: u16,
+    pub reason: String,
+}
+
+impl Attribute for ErrorCode {
+    const ID: u16 = 0x0009;
+
+    fn encode_value(self) -> Vec<u8> {
+        let mut value = Vec::with_capacity(4 + self.reason.len());
+        value.put_bytes(0, 2);
+        value.put_u8((self.code / 100) as u8);
+        value.put_u8((self.code % 100) as u8);
+        value.put_slice(self.reason.as_bytes());
+        value
+    }
+
+    fn decode_value(tlv_value: Vec<u8>) -> Result<Self, ParseError> {
+        macro_rules! err {
+            ($what:expr) => {
+                ParseError::new("ERROR-CODE", $what)
+            };
+        }
+        let mut buffer = tlv_value.as_slice();
+
+        if buffer.remaining() < 4 {
+            return Err(err!("buffer too short"));
+        }
+
+        if buffer.get_u16() != 0 {
+            return Err(err!("non-zero prefix bytes"));
+        }
+
+        let class = buffer.get_u8();
+        if !(3..=6).contains(&class) {
+            return Err(err!(format!("invalid error class {class}")));
+        }
+
+        let number = buffer.get_u8();
+        if !(0..100).contains(&number) {
+            return Err(err!(format!("invalid error number {number}")));
+        }
+
+        let reason = str::from_utf8(buffer.chunk()).map_err(|e| err!(e))?;
+
+        Ok(Self {
+            code: class as u16 * 100 + number as u16,
+            reason: reason.to_owned(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_decode_mapped_ipv4_address() {
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 12345);
+        let tlv = MappedAddress(addr).encode_value();
+        assert_eq!(tlv, vec![0, 1, 48, 57, 192, 168, 1, 1]);
+
+        let decoded = MappedAddress::decode_value(tlv).unwrap();
+        assert_eq!(decoded.0, addr);
+    }
+
+    #[test]
+    fn test_encode_decode_mapped_ipv6_address() {
+        let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::new(1, 2, 3, 4, 5, 6, 7, 1)), 12345);
+        let tlv = MappedAddress(addr).encode_value();
+        assert_eq!(
+            tlv,
+            vec![0, 2, 48, 57, 0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 1]
+        );
+
+        let decoded = MappedAddress::decode_value(tlv).unwrap();
+        assert_eq!(decoded.0, addr);
+    }
+
+    #[test]
+    fn test_encode_decode_software() {
+        let software = Software("stunny".to_owned());
+        let tlv = software.encode_value();
+        assert_eq!(tlv, b"stunny");
+
+        let decoded = Software::decode_value(tlv).unwrap();
+        assert_eq!(decoded.0, "stunny");
+    }
+
+    #[test]
+    fn test_encode_decode_error_code() {
+        let error = ErrorCode {
+            code: 400,
+            reason: "FAILED".to_owned(),
+        };
+        let tlv = error.encode_value();
+        assert_eq!(tlv, b"\x00\x00\x04\x00FAILED");
+
+        let decoded = ErrorCode::decode_value(tlv).unwrap();
+        assert_eq!(decoded.code, 400);
+        assert_eq!(decoded.reason, "FAILED");
+
+        let error = ErrorCode {
+            code: 420,
+            reason: String::new(),
+        };
+        let tlv = error.encode_value();
+        assert_eq!(tlv, b"\x00\x00\x04\x14");
+
+        let decoded = ErrorCode::decode_value(tlv).unwrap();
+        assert_eq!(decoded.code, 420);
+        assert_eq!(decoded.reason, "");
+    }
+}
