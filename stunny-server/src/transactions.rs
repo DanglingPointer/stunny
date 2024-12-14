@@ -44,8 +44,8 @@ impl Request {
         self.method
     }
 
-    pub fn extract_attribute<A: Attribute>(&mut self) -> Result<A, LookupError> {
-        self.attributes.extract_attribute::<A>()
+    pub fn attrs(&mut self) -> &mut Vec<Tlv> {
+        &mut self.attributes
     }
 
     pub fn build_response(self) -> Response {
@@ -95,7 +95,7 @@ impl Response {
     }
 }
 
-pub struct RequestReceiver(MessageChannels);
+pub(crate) struct RequestReceiver(MessageChannels);
 
 impl From<MessageChannels> for RequestReceiver {
     fn from(channels: MessageChannels) -> Self {

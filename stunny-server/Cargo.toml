@@ -21,6 +21,7 @@ tokio = { version = "1.42.0", default-features = false, features = [
     "sync",
     "macros",
 ] }
+async-trait = "0.1.83"
 
 [dev-dependencies]
 simple_logger = { workspace = true }
