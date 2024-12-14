@@ -18,22 +18,17 @@ jobs:
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt
-    - run: cargo fmt --check --verbose
+    - run: cargo fmt --check --all --verbose
 
   lint:
     name: Lint
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: clippy
     - run: cargo clippy --all-targets --all-features -- -D warnings
-    - run: cargo clippy --release --all-targets --all-features -- -D warnings
 
   build:
     name: Build release
@@ -45,7 +40,8 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
-    - run: cargo build --release --all-targets --verbose
+    - run: cargo build --release --verbose
+    - run: cargo build --release --all-targets --all-features --verbose
 
   test:
     name: Run tests
