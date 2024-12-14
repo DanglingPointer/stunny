@@ -2,7 +2,6 @@
 use futures::StreamExt;
 use local_async_utils::{local_sync, millisec, sec};
 use std::collections::HashSet;
-use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 use stunny_client::*;
@@ -16,10 +15,6 @@ macro_rules! local_test {
     ($($arg:tt)+) => {{
         task::LocalSet::new().run_until(time::timeout(sec!(10), async { $($arg)+ })).await.expect("test timeout");
     }}
-}
-
-async fn create_udp_socket() -> io::Result<UdpSocket> {
-    UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).await
 }
 
 const UDP_SERVERS: [&str; 4] = [
@@ -103,8 +98,7 @@ async fn send_bind_request_over_udp() {
     local_test! {
         const MAX_CONCURRENT_REQUESTS: usize = 10;
 
-        let socket = create_udp_socket().await.unwrap();
-
+        let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).await.unwrap();
         let (message_channels, driver) = setup_udp(socket, MAX_CONCURRENT_REQUESTS);
 
         let (request_sender, _, _, processor) = setup_transactions(

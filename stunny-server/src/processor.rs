@@ -36,6 +36,7 @@ impl Processor {
                 None => self.default_handler.clone(),
             };
             task::spawn(async move {
+                log::debug!("Serving {:?}", request);
                 handler.handle_request(request).await;
             });
         }
@@ -118,7 +119,7 @@ mod tests {
         task::spawn(processor.run());
 
         // when
-        let ip = SocketAddr::new(Ipv4Addr::new(1, 2, 3, 4).into(), 5349);
+        let ip = SocketAddr::new(Ipv4Addr::new(1, 2, 3, 4).into(), 3478);
         ingress_sink
             .try_send((Message::request(0x0001, [0xaf; 12], Vec::new()), ip))
             .unwrap();
@@ -148,7 +149,7 @@ mod tests {
         task::spawn(processor.run());
 
         // when
-        let ip = SocketAddr::new(Ipv4Addr::new(1, 2, 3, 4).into(), 5349);
+        let ip = SocketAddr::new(Ipv4Addr::new(1, 2, 3, 4).into(), 3478);
         ingress_sink
             .try_send((Message::request(0x0002, [0xfa; 12], Vec::new()), ip))
             .unwrap();

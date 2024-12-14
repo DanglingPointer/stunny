@@ -11,7 +11,10 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::try_join;
 
-pub fn setup_udp(socket: UdpSocket, max_outstanding_requests: usize) -> (MessageChannels, Driver) {
+pub fn setup_udp(
+    socket: UdpSocket,
+    max_outstanding_requests: usize,
+) -> (MessageChannels, IoDriver) {
     let (ingress_sender, ingress_receiver) = mpsc::channel(max_outstanding_requests);
     let (egress_sender, egress_receiver) = mpsc::channel(max_outstanding_requests);
     (
@@ -19,7 +22,7 @@ pub fn setup_udp(socket: UdpSocket, max_outstanding_requests: usize) -> (Message
             egress_sink: egress_sender,
             ingress_source: ingress_receiver,
         },
-        Driver {
+        IoDriver {
             socket,
             ingress_sender,
             egress_receiver,
@@ -27,13 +30,13 @@ pub fn setup_udp(socket: UdpSocket, max_outstanding_requests: usize) -> (Message
     )
 }
 
-pub struct Driver {
+pub struct IoDriver {
     socket: UdpSocket,
     ingress_sender: mpsc::Sender<(Message, SocketAddr)>,
     egress_receiver: mpsc::Receiver<(Message, SocketAddr)>,
 }
 
-impl Driver {
+impl IoDriver {
     pub async fn run(self) -> io::Result<()> {
         let ingress = Ingress {
             socket: &self.socket,
