@@ -1,3 +1,4 @@
+#![cfg(all(feature = "udp", feature = "tcp"))]
 use futures::StreamExt;
 use local_async_utils::{local_sync, millisec, sec};
 use std::collections::HashSet;

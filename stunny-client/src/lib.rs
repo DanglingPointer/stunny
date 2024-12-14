@@ -20,6 +20,9 @@ pub use error::*;
 pub use interface::*;
 pub use rto::*;
 
+// re-export core
+pub use stunny_core::*;
+
 pub fn setup_transactions<P: RtoPolicy>(
     message_channels: MessageChannels,
     max_outstanding_requests: usize,

@@ -71,6 +71,7 @@ impl StreamFactory for TcpStreamFactory {
 mod tests {
     use super::super::testutils::*;
     use super::*;
+    use local_async_utils::sec;
     use std::net::{Ipv4Addr, SocketAddrV4};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::{join, net::TcpStream, task, time};
@@ -293,6 +294,34 @@ mod tests {
 
             farend_sock.write_all(&BIND_RESPONSE_BYTES).await.unwrap();
             verify_ingress!(channels, bind_response_msg(), farend_addr);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn close_idle_connection() {
+        let _ = simple_logger::SimpleLogger::new()
+            .with_level(log::LevelFilter::Trace)
+            .init();
+        local_test! {
+            const INACTIVITY_TIMEOUT: Duration = sec!(2);
+
+            let (channels, pool) = setup_tcp(1, INACTIVITY_TIMEOUT, new_socket);
+            task::spawn_local(pool.run());
+
+            let farend_addr = local_addr(7006);
+            let accept_task = task::spawn_local(accept(farend_addr));
+
+            channels
+                .egress_sink
+                .send((bind_request_msg(), farend_addr))
+                .await
+                .unwrap();
+            let mut farend_sock = accept_task.await.unwrap();
+            verify_egress!(farend_sock, BIND_REQUEST_BYTES);
+
+            time::sleep(INACTIVITY_TIMEOUT).await;
+            task::yield_now().await;
+            assert_eq!(farend_sock.try_read(&mut [0u8]).unwrap_err().kind(), io::ErrorKind::ConnectionReset);
         }
     }
 }

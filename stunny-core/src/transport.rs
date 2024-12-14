@@ -2,6 +2,7 @@ use crate::message::*;
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
 
+#[cfg(any(feature = "tcp", feature = "tls"))]
 #[cfg(test)]
 #[macro_use]
 mod testutils;

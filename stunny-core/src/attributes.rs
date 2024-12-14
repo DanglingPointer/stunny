@@ -70,8 +70,8 @@ impl AttributeCollection for Vec<Tlv> {
 
 // ------------------------------------------------------------------------------------------------
 
-pub fn encode_socket_addr(addr: SocketAddr) -> Vec<u8> {
-    let mut value = Vec::new();
+fn encode_socket_addr(addr: SocketAddr) -> Vec<u8> {
+    let mut value = Vec::with_capacity(20);
     value.put_u8(0);
     match addr {
         SocketAddr::V4(addr) => {
@@ -88,7 +88,7 @@ pub fn encode_socket_addr(addr: SocketAddr) -> Vec<u8> {
     value
 }
 
-pub fn decode_socket_addr(
+fn decode_socket_addr(
     tlv_value: Vec<u8>,
     attribute_name: &'static str,
 ) -> Result<SocketAddr, ParseError> {
@@ -158,8 +158,7 @@ impl Attribute for MappedAddress {
 pub struct XorMappedAddress(pub SocketAddr);
 
 // For encoding and decoding IPv6, we need access to transaction id which we don't have here.
-// Instead, `transactions::Manager` will perform the XOR operations, converting all XOR-MAPPED-ADDRESS attributes
-// to MAPPED-ADDRESS
+// Instead, we rely on `Message::xor_socket_addr()` being called elsewhere earlier.
 impl Attribute for XorMappedAddress {
     const ID: u16 = 0x0020;
 

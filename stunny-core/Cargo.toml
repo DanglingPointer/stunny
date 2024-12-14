@@ -8,7 +8,7 @@ repository = "https://github.com/DanglingPointer/stunny"
 license = "Apache-2.0"
 
 [features]
-default = ["udp", "tcp"]
+default = []
 udp = []
 tcp = []
 tls = ["dep:tokio-rustls"]
@@ -37,6 +37,4 @@ tokio-rustls = { version = "0.26.1", default-features = false, optional = true, 
 simple_logger = { version = "5.0.0" }
 tokio-test = "0.4.4"
 futures = "0.3.31"
-local_async_utils = { git = "https://github.com/DanglingPointer/local_async_utils.git", tag = "v0.1.0", features = [
-    "tokio-time",
-] }
+local_async_utils = { workspace = true }

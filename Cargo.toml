@@ -9,3 +9,6 @@ opt-level = 3
 log = "0.4.22"
 thiserror = "2.0.5"
 derive_more = { version = "1.0.0" }
+local_async_utils = { git = "https://github.com/DanglingPointer/local_async_utils.git", tag = "v0.1.0", features = [
+    "tokio-time",
+] }
