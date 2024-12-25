@@ -7,13 +7,11 @@ use tokio::{net::UdpSocket, task};
 /// Multi-threaded UDP server that serves BIND requests on port 3478
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let _ = simple_logger::SimpleLogger::new()
+    simple_logger::SimpleLogger::new()
         .with_level(log::LevelFilter::Trace)
-        .init();
+        .init()?;
 
-    let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 3478))
-        .await
-        .unwrap();
+    let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 3478)).await?;
 
     log::info!("Starting server on port 3478");
 
