@@ -34,7 +34,11 @@ impl TlsConnectionPool {
     }
 }
 
-impl<IO: AsyncRead + AsyncWrite + Unpin> Connection for TlsStream<IO> {}
+impl ConnectionStream for TlsStream<TcpStream> {
+    fn split(&mut self) -> (impl AsyncRead + Unpin, impl AsyncWrite + Unpin) {
+        tokio::io::split(self)
+    }
+}
 
 #[derive(Clone)]
 struct TlsStreamFactory {
@@ -42,13 +46,13 @@ struct TlsStreamFactory {
     socket_factory: Rc<dyn Fn() -> io::Result<TcpSocket>>,
 }
 
-impl StreamFactory for TlsStreamFactory {
-    type ConnectionStream = TlsStream<TcpStream>;
+impl ConnectionFactory for TlsStreamFactory {
+    type Connection = TlsStream<TcpStream>;
 
-    async fn new_connected_stream(
+    async fn new_outbound(
         &mut self,
         remote_addr: SocketAddr,
-    ) -> io::Result<Self::ConnectionStream> {
+    ) -> io::Result<Self::Connection> {
         let socket = (self.socket_factory)()?;
         let stream = socket.connect(remote_addr).await?;
         let stream = self

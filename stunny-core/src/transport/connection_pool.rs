@@ -7,14 +7,14 @@ use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
 use std::time::Duration;
-use tokio::io::{split, AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::time::{self, Instant};
 use tokio::{task, try_join};
 
-pub(super) fn setup_connection_pool<F: StreamFactory>(
+pub(super) fn setup_connection_pool<F: ConnectionFactory>(
     max_outstanding_requests: usize,
     connection_keep_alive: Duration,
     stream_factory: F,
@@ -37,7 +37,7 @@ pub(super) fn setup_connection_pool<F: StreamFactory>(
     )
 }
 
-pub(super) struct ConnectionPool<F: StreamFactory> {
+pub(super) struct ConnectionPool<F: ConnectionFactory> {
     connections: HashMap<SocketAddr, mpsc::Sender<Message>>,
     egress_source: mpsc::Receiver<(Message, SocketAddr)>,
     ingress_sink: mpsc::Sender<(Message, SocketAddr)>,
@@ -46,16 +46,20 @@ pub(super) struct ConnectionPool<F: StreamFactory> {
     stream_factory: F,
 }
 
-pub(super) trait StreamFactory {
-    type ConnectionStream: Connection;
-
-    fn new_connected_stream(
-        &mut self,
-        remote_addr: SocketAddr,
-    ) -> impl Future<Output = io::Result<Self::ConnectionStream>>;
+pub(super) trait ConnectionStream {
+    fn split(&mut self) -> (impl AsyncRead + Unpin, impl AsyncWrite + Unpin);
 }
 
-impl<F: StreamFactory + Clone + 'static> ConnectionPool<F> {
+pub(super) trait ConnectionFactory {
+    type Connection: ConnectionStream;
+
+    fn new_outbound(
+        &mut self,
+        remote_addr: SocketAddr,
+    ) -> impl Future<Output = io::Result<Self::Connection>>;
+}
+
+impl<F: ConnectionFactory + Clone + 'static> ConnectionPool<F> {
     pub(super) async fn run(mut self) {
         while let Some((message, remote_addr)) = self.egress_source.recv().await {
             if let Entry::Occupied(occupied_entry) = self.connections.entry(remote_addr) {
@@ -75,19 +79,14 @@ impl<F: StreamFactory + Clone + 'static> ConnectionPool<F> {
                 occupied_entry.remove();
             }
             // if we ended up here, we need to create a new connection
-            match self.launch_new_connection(remote_addr) {
-                Ok(egress_sink) if egress_sink.try_send(message).is_ok() => {
-                    self.connections.insert(remote_addr, egress_sink);
-                }
-                _ => log::error!("Failed to connect to {remote_addr}, dropping tx message"),
-            }
+            let egress_sink = self.launch_new_connection(remote_addr);
+            let _send_result = egress_sink.try_send(message);
+            debug_assert!(_send_result.is_ok());
+            self.connections.insert(remote_addr, egress_sink);
         }
     }
 
-    fn launch_new_connection(
-        &mut self,
-        remote_addr: SocketAddr,
-    ) -> io::Result<mpsc::Sender<Message>> {
+    fn launch_new_connection(&mut self, remote_addr: SocketAddr) -> mpsc::Sender<Message> {
         let (egress_sink, egress_source) = mpsc::channel(self.max_outstanding_requests);
         let ingress_sink = self.ingress_sink.clone();
         let mut stream_factory = self.stream_factory.clone();
@@ -96,45 +95,32 @@ impl<F: StreamFactory + Clone + 'static> ConnectionPool<F> {
             async move {
                 log::trace!("Connecting to {remote_addr}");
                 let stream =
-                    time::timeout(IO_TIMEOUT, stream_factory.new_connected_stream(remote_addr))
-                        .await??;
+                    time::timeout(IO_TIMEOUT, stream_factory.new_outbound(remote_addr)).await??;
                 log::debug!("Successfully connected to {remote_addr}");
-                stream
-                    .run(remote_addr, ingress_sink, egress_source, inactivity_timeout)
-                    .await?;
+                run_connection(
+                    stream,
+                    remote_addr,
+                    ingress_sink,
+                    egress_source,
+                    inactivity_timeout,
+                )
+                .await?;
                 io::Result::Ok(())
             }
             .inspect_err(move |e| log::warn!("Connection to {remote_addr} exited with error: {e}")),
         );
-        Ok(egress_sink)
-    }
-}
-pub(super) trait Connection: AsyncRead + AsyncWrite + Sized {
-    fn run(
-        self,
-        remote_addr: SocketAddr,
-        ingress_sink: mpsc::Sender<(Message, SocketAddr)>,
-        egress_source: mpsc::Receiver<Message>,
-        inactivity_timeout: Duration,
-    ) -> impl Future<Output = io::Result<()>> {
-        let io = split(self);
-        run_connection(
-            io,
-            remote_addr,
-            ingress_sink,
-            egress_source,
-            inactivity_timeout,
-        )
+        egress_sink
     }
 }
 
-pub(super) async fn run_connection(
-    (rx, tx): (impl AsyncRead + Unpin, impl AsyncWrite + Unpin),
+async fn run_connection(
+    mut conn: impl ConnectionStream,
     remote_addr: SocketAddr,
     ingress_sink: mpsc::Sender<(Message, SocketAddr)>,
     egress_source: mpsc::Receiver<Message>,
     inactivity_timeout: Duration,
 ) -> io::Result<()> {
+    let (rx, tx) = conn.split();
     let last_active = Cell::new(Instant::now());
     try_join!(
         process_ingress(rx, ingress_sink, remote_addr, &last_active),

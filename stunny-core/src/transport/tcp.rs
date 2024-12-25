@@ -4,8 +4,8 @@ use std::io;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpSocket, TcpStream};
-use tokio::sync::mpsc;
 
 pub fn setup_tcp(
     max_outstanding_requests: usize,
@@ -30,23 +30,9 @@ impl TcpConnectionPool {
     }
 }
 
-impl Connection for TcpStream {
-    async fn run(
-        mut self,
-        remote_addr: SocketAddr,
-        ingress_sink: mpsc::Sender<(Message, SocketAddr)>,
-        egress_source: mpsc::Receiver<Message>,
-        inactivity_timeout: Duration,
-    ) -> io::Result<()> {
-        let io = self.split();
-        run_connection(
-            io,
-            remote_addr,
-            ingress_sink,
-            egress_source,
-            inactivity_timeout,
-        )
-        .await
+impl ConnectionStream for TcpStream {
+    fn split(&mut self) -> (impl AsyncRead + Unpin, impl AsyncWrite + Unpin) {
+        self.split()
     }
 }
 
@@ -55,13 +41,10 @@ struct TcpStreamFactory {
     socket_factory: Rc<dyn Fn() -> io::Result<TcpSocket>>,
 }
 
-impl StreamFactory for TcpStreamFactory {
-    type ConnectionStream = TcpStream;
+impl ConnectionFactory for TcpStreamFactory {
+    type Connection = TcpStream;
 
-    async fn new_connected_stream(
-        &mut self,
-        remote_addr: SocketAddr,
-    ) -> io::Result<Self::ConnectionStream> {
+    async fn new_outbound(&mut self, remote_addr: SocketAddr) -> io::Result<Self::Connection> {
         let socket = (self.socket_factory)()?;
         socket.connect(remote_addr).await
     }
