@@ -1,11 +1,11 @@
 use super::connection_pool::*;
 use super::*;
+use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
-use std::rc::Rc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::{TcpSocket, TcpStream};
+use tokio::net::{TcpListener, TcpSocket, TcpStream};
 
 pub fn setup_tcp(
     max_outstanding_requests: usize,
@@ -15,18 +15,37 @@ pub fn setup_tcp(
     let (channels, pool) = setup_connection_pool(
         max_outstanding_requests,
         connection_keep_alive,
-        TcpStreamFactory {
-            socket_factory: Rc::new(socket_factory),
-        },
+        TcpConnectionFactory(Box::new(socket_factory)),
     );
-    (channels, TcpConnectionPool(pool))
+    (channels, TcpConnectionPool(PoolVariant::Client(pool)))
 }
 
-pub struct TcpConnectionPool(ConnectionPool<TcpStreamFactory>);
+pub fn setup_tcp_server(
+    max_pending_requests: usize,
+    max_pending_connections: u32,
+    connection_keep_alive: Duration,
+    bound_socket: TcpSocket,
+) -> io::Result<(MessageChannels, TcpConnectionPool)> {
+    let listener = bound_socket.listen(max_pending_connections)?;
+    let (channels, pool) = setup_connection_pool(
+        max_pending_requests,
+        connection_keep_alive,
+        TcpConnectionAcceptor(listener),
+    );
+    Ok((channels, TcpConnectionPool(PoolVariant::Server(pool))))
+}
+
+pub struct TcpConnectionPool(PoolVariant);
 
 impl TcpConnectionPool {
     pub async fn run(self) {
-        self.0.run().await;
+        match self.0 {
+            PoolVariant::Client(pool) => pool.run_client().await,
+            PoolVariant::Server(pool) => pool
+                .run_server()
+                .await
+                .unwrap_or_else(|e| log::error!("TCP server exited with error {e}")),
+        }
     }
 }
 
@@ -36,17 +55,41 @@ impl ConnectionStream for TcpStream {
     }
 }
 
-#[derive(Clone)]
-struct TcpStreamFactory {
-    socket_factory: Rc<dyn Fn() -> io::Result<TcpSocket>>,
+// ----------------------------------------------
+
+enum PoolVariant {
+    Client(ConnectionPool<TcpConnectionFactory>),
+    Server(ConnectionPool<TcpConnectionAcceptor>),
 }
 
-impl ConnectionFactory for TcpStreamFactory {
+// ----------------------------------------------
+
+struct TcpConnectionFactory(Box<dyn Fn() -> io::Result<TcpSocket>>);
+
+impl ConnectionFactory for TcpConnectionFactory {
     type Connection = TcpStream;
 
-    async fn new_outbound(&mut self, remote_addr: SocketAddr) -> io::Result<Self::Connection> {
-        let socket = (self.socket_factory)()?;
-        socket.connect(remote_addr).await
+    fn new_outbound<'f>(
+        &mut self,
+        remote_addr: SocketAddr,
+    ) -> impl Future<Output = io::Result<Self::Connection>> + 'f {
+        let socket_result = (self.0)();
+        async move {
+            let socket = socket_result?;
+            socket.connect(remote_addr).await
+        }
+    }
+}
+
+// ----------------------------------------------
+
+struct TcpConnectionAcceptor(TcpListener);
+
+impl ConnectionAcceptor for TcpConnectionAcceptor {
+    type Connection = TcpStream;
+
+    async fn new_inbound(&mut self) -> io::Result<(Self::Connection, SocketAddr)> {
+        self.0.accept().await
     }
 }
 
@@ -54,6 +97,7 @@ impl ConnectionFactory for TcpStreamFactory {
 mod tests {
     use super::super::testutils::*;
     use super::*;
+    use futures_util::{stream, StreamExt};
     use local_async_utils::sec;
     use std::net::{Ipv4Addr, SocketAddrV4};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -75,6 +119,14 @@ mod tests {
 
     fn setup() -> MessageChannels {
         let (channels, pool) = setup_tcp(10, Duration::from_secs(5), new_socket);
+        task::spawn_local(pool.run());
+        channels
+    }
+
+    fn server_setup(server_addr: SocketAddr) -> MessageChannels {
+        let server_sock = new_socket().unwrap();
+        server_sock.bind(server_addr).unwrap();
+        let (channels, pool) = setup_tcp_server(10, 10, sec!(20), server_sock).unwrap();
         task::spawn_local(pool.run());
         channels
     }
@@ -144,7 +196,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn multiple_concurrenct_connections() {
+    async fn serve_single_connection() {
+        local_test! {
+            let server_addr = local_addr(8000);
+            let mut channels = server_setup(server_addr);
+            task::yield_now().await;
+
+            let mut farend_sock = new_socket()
+                .unwrap()
+                .connect(server_addr)
+                .await
+                .expect("failed to connect to server");
+            let farend_addr = farend_sock.local_addr().unwrap();
+
+            farend_sock.write_all(&BIND_REQUEST_BYTES).await.unwrap();
+            verify_ingress!(channels, bind_request_msg(), farend_addr);
+
+            channels
+                .egress_sink
+                .send((bind_response_msg(), farend_addr))
+                .await
+                .unwrap();
+            verify_egress!(farend_sock, BIND_RESPONSE_BYTES);
+
+            farend_sock.write_all(&BIND_INDICATION_BYTES).await.unwrap();
+            verify_ingress!(channels, bind_indication_msg(), farend_addr);
+        }
+    }
+
+    #[tokio::test]
+    async fn multiple_concurrent_connections() {
         local_test! {
             let mut channels = setup();
             let farend1_addr = local_addr(7001);
@@ -183,6 +264,66 @@ mod tests {
             assert_eq!(message, bind_indication_msg());
 
             assert!(channels.ingress_source.try_recv().is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn serve_multiple_concurrent_connections() {
+        local_test! {
+            let server_addr = local_addr(8001);
+            let mut channels = server_setup(server_addr);
+            task::yield_now().await;
+
+            let mut farend_sock1 = new_socket()
+                .unwrap()
+                .connect(server_addr)
+                .await
+                .expect("failed to connect to server");
+            let farend_addr1 = farend_sock1.local_addr().unwrap();
+
+            let mut farend_sock2 = new_socket()
+                .unwrap()
+                .connect(server_addr)
+                .await
+                .expect("failed to connect to server");
+            let farend_addr2 = farend_sock2.local_addr().unwrap();
+
+            // when
+            farend_sock2
+                .write_all(&BIND_INDICATION_BYTES)
+                .await
+                .unwrap();
+            farend_sock1.write_all(&BIND_REQUEST_BYTES).await.unwrap();
+
+            // then
+            let msgs: Vec<_> = stream::poll_fn(|cx| channels.ingress_source.poll_recv(cx))
+                .take(2)
+                .collect()
+                .await;
+            assert!(channels.ingress_source.try_recv().is_err());
+            assert!(msgs
+                .iter()
+                .any(|(msg, src)| src == &farend_addr2 && msg == &bind_indication_msg()));
+            assert!(msgs
+                .iter()
+                .any(|(msg, src)| src == &farend_addr1 && msg == &bind_request_msg()));
+
+            // when
+            channels
+                .egress_sink
+                .send((bind_response_msg(), farend_addr1))
+                .await
+                .unwrap();
+
+            channels
+                .egress_sink
+                .send((bind_indication_msg(), farend_addr2))
+                .await
+                .unwrap();
+
+            // then
+            verify_egress!(farend_sock1, BIND_RESPONSE_BYTES);
+            verify_egress!(farend_sock2, BIND_INDICATION_BYTES);
         }
     }
 

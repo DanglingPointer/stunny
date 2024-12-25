@@ -1,9 +1,10 @@
 use super::connection_pool::*;
 use super::MessageChannels;
+use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
-use std::{rc::Rc, sync::Arc};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio_rustls::rustls::{pki_types::ServerName, ClientConfig};
@@ -20,7 +21,7 @@ pub fn setup_tls(
         connection_keep_alive,
         TlsStreamFactory {
             tls_connector: TlsConnector::from(tls_config),
-            socket_factory: Rc::new(socket_factory),
+            socket_factory: Box::new(socket_factory),
         },
     );
     (channels, TlsConnectionPool(pool))
@@ -30,7 +31,7 @@ pub struct TlsConnectionPool(ConnectionPool<TlsStreamFactory>);
 
 impl TlsConnectionPool {
     pub async fn run(self) {
-        self.0.run().await;
+        self.0.run_client().await;
     }
 }
 
@@ -40,25 +41,27 @@ impl ConnectionStream for TlsStream<TcpStream> {
     }
 }
 
-#[derive(Clone)]
 struct TlsStreamFactory {
     tls_connector: TlsConnector,
-    socket_factory: Rc<dyn Fn() -> io::Result<TcpSocket>>,
+    socket_factory: Box<dyn Fn() -> io::Result<TcpSocket>>,
 }
 
 impl ConnectionFactory for TlsStreamFactory {
     type Connection = TlsStream<TcpStream>;
 
-    async fn new_outbound(
+    fn new_outbound<'f>(
         &mut self,
         remote_addr: SocketAddr,
-    ) -> io::Result<Self::Connection> {
-        let socket = (self.socket_factory)()?;
-        let stream = socket.connect(remote_addr).await?;
-        let stream = self
-            .tls_connector
-            .connect(ServerName::IpAddress(remote_addr.ip().into()), stream)
-            .await?;
-        Ok(stream)
+    ) -> impl Future<Output = io::Result<Self::Connection>> + 'f {
+        let socket_result = (self.socket_factory)();
+        let tls_connector = self.tls_connector.clone();
+        async move {
+            let socket = socket_result?;
+            let stream = socket.connect(remote_addr).await?;
+            let stream = tls_connector
+                .connect(ServerName::IpAddress(remote_addr.ip().into()), stream)
+                .await?;
+            Ok(stream)
+        }
     }
 }

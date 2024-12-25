@@ -1,9 +1,8 @@
 use super::*;
-use futures_util::TryFutureExt;
+use futures_util::{FutureExt, TryFutureExt};
 use std::cell::Cell;
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::future::Future;
+use std::future::{ready, Future};
 use std::io;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -12,14 +11,14 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::time::{self, Instant};
-use tokio::{task, try_join};
+use tokio::{select, task, try_join};
 
-pub(super) fn setup_connection_pool<F: ConnectionFactory>(
-    max_outstanding_requests: usize,
+pub(super) fn setup_connection_pool<C>(
+    max_pending_requests: usize,
     connection_keep_alive: Duration,
-    stream_factory: F,
-) -> (MessageChannels, ConnectionPool<F>) {
-    let (ingress_sender, ingress_receiver) = mpsc::channel(max_outstanding_requests);
+    connector: C,
+) -> (MessageChannels, ConnectionPool<C>) {
+    let (ingress_sender, ingress_receiver) = mpsc::channel(max_pending_requests);
     let (egress_sender, egress_receiver) = mpsc::channel(1);
     (
         MessageChannels {
@@ -30,20 +29,20 @@ pub(super) fn setup_connection_pool<F: ConnectionFactory>(
             connections: Default::default(),
             egress_source: egress_receiver,
             ingress_sink: ingress_sender,
-            max_outstanding_requests,
+            egress_queue_capacity: max_pending_requests,
             connection_keep_alive,
-            stream_factory,
+            connector,
         },
     )
 }
 
-pub(super) struct ConnectionPool<F: ConnectionFactory> {
+pub(super) struct ConnectionPool<C> {
     connections: HashMap<SocketAddr, mpsc::Sender<Message>>,
     egress_source: mpsc::Receiver<(Message, SocketAddr)>,
     ingress_sink: mpsc::Sender<(Message, SocketAddr)>,
-    max_outstanding_requests: usize,
+    egress_queue_capacity: usize,
     connection_keep_alive: Duration,
-    stream_factory: F,
+    connector: C,
 }
 
 pub(super) trait ConnectionStream {
@@ -51,19 +50,76 @@ pub(super) trait ConnectionStream {
 }
 
 pub(super) trait ConnectionFactory {
-    type Connection: ConnectionStream;
+    type Connection: ConnectionStream + 'static;
 
-    fn new_outbound(
+    fn new_outbound<'f>(
         &mut self,
         remote_addr: SocketAddr,
-    ) -> impl Future<Output = io::Result<Self::Connection>>;
+    ) -> impl Future<Output = io::Result<Self::Connection>> + 'f;
 }
 
-impl<F: ConnectionFactory + Clone + 'static> ConnectionPool<F> {
-    pub(super) async fn run(mut self) {
+pub(super) trait ConnectionAcceptor {
+    type Connection: ConnectionStream + 'static;
+
+    fn new_inbound(&mut self) -> impl Future<Output = io::Result<(Self::Connection, SocketAddr)>>;
+}
+
+impl<A: ConnectionAcceptor> ConnectionPool<A> {
+    pub(super) async fn run_server(mut self) -> io::Result<()> {
+        loop {
+            select! {
+                biased;
+                egress = self.egress_source.recv() => match egress {
+                    Some(egress) => self.route_egress(egress),
+                    None => break,
+                },
+                connection = self.connector.new_inbound() => {
+                    self.add_connection(connection?);
+                },
+            }
+        }
+        Ok(())
+    }
+
+    fn route_egress(&mut self, (message, remote_addr): (Message, SocketAddr)) {
+        let egress_sink = match self.connections.get(&remote_addr) {
+            Some(sink) => sink,
+            None => return log::warn!("Dropping message to {remote_addr}: connection not found"),
+        };
+        match egress_sink.try_send(message) {
+            Ok(_) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                log::warn!("Dropping message to {remote_addr}: tx channel is full");
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                log::warn!("Dropping message to {remote_addr}: connection closed");
+            }
+        }
+    }
+
+    fn add_connection(&mut self, (connection, remote_addr): (A::Connection, SocketAddr)) {
+        let (egress_sink, egress_source) = mpsc::channel(self.egress_queue_capacity);
+        self.connections.insert(remote_addr, egress_sink);
+        task::spawn_local(
+            connection_task(
+                ready(Ok(connection)),
+                remote_addr,
+                self.ingress_sink.clone(),
+                egress_source,
+                self.connection_keep_alive,
+            )
+            .inspect_err(move |e| log::warn!("Connection to {remote_addr} exited with error: {e}")),
+        );
+        // clean up stale entries
+        self.connections.retain(|_, ch| !ch.is_closed());
+    }
+}
+
+impl<F: ConnectionFactory> ConnectionPool<F> {
+    pub(super) async fn run_client(mut self) {
         while let Some((message, remote_addr)) = self.egress_source.recv().await {
-            if let Entry::Occupied(occupied_entry) = self.connections.entry(remote_addr) {
-                match occupied_entry.get().try_reserve() {
+            if let Some(egress_sink) = self.connections.get(&remote_addr) {
+                match egress_sink.try_reserve() {
                     Ok(sender) => {
                         sender.send(message);
                         continue;
@@ -76,51 +132,39 @@ impl<F: ConnectionFactory + Clone + 'static> ConnectionPool<F> {
                         log::info!("Reconnecting to {remote_addr}");
                     }
                 }
-                occupied_entry.remove();
             }
-            // if we ended up here, we need to create a new connection
-            let egress_sink = self.launch_new_connection(remote_addr);
-            let _send_result = egress_sink.try_send(message);
-            debug_assert!(_send_result.is_ok());
+            // if we ended up here, we need to create a new outbound connection
+            let (egress_sink, egress_source) = mpsc::channel(self.egress_queue_capacity);
+            let _ = egress_sink.try_send(message);
             self.connections.insert(remote_addr, egress_sink);
-        }
-    }
-
-    fn launch_new_connection(&mut self, remote_addr: SocketAddr) -> mpsc::Sender<Message> {
-        let (egress_sink, egress_source) = mpsc::channel(self.max_outstanding_requests);
-        let ingress_sink = self.ingress_sink.clone();
-        let mut stream_factory = self.stream_factory.clone();
-        let inactivity_timeout = self.connection_keep_alive;
-        task::spawn_local(
-            async move {
-                log::trace!("Connecting to {remote_addr}");
-                let stream =
-                    time::timeout(IO_TIMEOUT, stream_factory.new_outbound(remote_addr)).await??;
-                log::debug!("Successfully connected to {remote_addr}");
-                run_connection(
-                    stream,
+            task::spawn_local(
+                connection_task(
+                    time::timeout(IO_TIMEOUT, self.connector.new_outbound(remote_addr)).map(|r| r?),
                     remote_addr,
-                    ingress_sink,
+                    self.ingress_sink.clone(),
                     egress_source,
-                    inactivity_timeout,
+                    self.connection_keep_alive,
                 )
-                .await?;
-                io::Result::Ok(())
-            }
-            .inspect_err(move |e| log::warn!("Connection to {remote_addr} exited with error: {e}")),
-        );
-        egress_sink
+                .inspect_err(move |e| {
+                    log::warn!("Connection to {remote_addr} exited with error: {e}")
+                }),
+            );
+            // clean up stale entries
+            self.connections.retain(|_, ch| !ch.is_closed());
+        }
     }
 }
 
-async fn run_connection(
-    mut conn: impl ConnectionStream,
+async fn connection_task<C: ConnectionStream>(
+    get_stream: impl Future<Output = io::Result<C>>,
     remote_addr: SocketAddr,
     ingress_sink: mpsc::Sender<(Message, SocketAddr)>,
     egress_source: mpsc::Receiver<Message>,
     inactivity_timeout: Duration,
 ) -> io::Result<()> {
-    let (rx, tx) = conn.split();
+    let mut connection_stream = get_stream.await?;
+    log::debug!("New connection to {remote_addr}");
+    let (rx, tx) = connection_stream.split();
     let last_active = Cell::new(Instant::now());
     try_join!(
         process_ingress(rx, ingress_sink, remote_addr, &last_active),
