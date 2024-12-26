@@ -6,7 +6,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 use stunny_client::*;
 use stunny_core::attributes::*;
-use stunny_core::transport::tcp::setup_tcp;
+use stunny_core::transport::tcp::setup_tcp_client;
 use stunny_core::transport::udp::setup_udp;
 use tokio::net::{lookup_host, TcpSocket, UdpSocket};
 use tokio::{join, task, time};
@@ -147,7 +147,7 @@ async fn send_bind_request_over_tcp() {
         const MAX_CONCURRENT_REQUESTS: usize = 10;
 
         let (message_channels, connection_pool) =
-            setup_tcp(MAX_CONCURRENT_REQUESTS, Duration::from_secs(10), || {
+            setup_tcp_client(MAX_CONCURRENT_REQUESTS, Duration::from_secs(10), || {
                 TcpSocket::new_v4().inspect(|s| s.set_nodelay(true).unwrap())
             });
 

@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
 
-pub fn setup_tcp<F>(
+pub fn setup_tcp_client<F>(
     max_outstanding_requests: usize,
     connection_keep_alive: Duration,
     socket_factory: F,
@@ -43,18 +43,15 @@ pub struct TcpConnectionPool(PoolVariant);
 impl TcpConnectionPool {
     pub async fn run(self) {
         match self.0 {
-            PoolVariant::Client(pool) => pool.run_client().await,
-            PoolVariant::Server(pool) => pool
-                .run_server()
-                .await
-                .unwrap_or_else(|e| log::error!("TCP server exited with error {e}")),
+            PoolVariant::Client(pool) => {
+                pool.run_client().await;
+            }
+            PoolVariant::Server(pool) => {
+                pool.run_server()
+                    .await
+                    .unwrap_or_else(|e| log::error!("TLS server exited with error {e}"));
+            }
         }
-    }
-}
-
-impl ConnectionStream for TcpStream {
-    fn split(&mut self) -> (impl AsyncRead + Unpin, impl AsyncWrite + Unpin) {
-        self.split()
     }
 }
 
@@ -63,6 +60,12 @@ impl ConnectionStream for TcpStream {
 enum PoolVariant {
     Client(ConnectionPool<TcpConnectionFactory>),
     Server(ConnectionPool<TcpConnectionAcceptor>),
+}
+
+impl ConnectionStream for TcpStream {
+    fn split(&mut self) -> (impl AsyncRead + Unpin, impl AsyncWrite + Unpin) {
+        self.split()
+    }
 }
 
 // ----------------------------------------------
@@ -127,7 +130,7 @@ mod tests {
     }
 
     fn setup() -> MessageChannels {
-        let (channels, pool) = setup_tcp(10, Duration::from_secs(5), new_socket);
+        let (channels, pool) = setup_tcp_client(10, Duration::from_secs(5), new_socket);
         task::spawn(pool.run());
         channels
     }
@@ -407,7 +410,7 @@ mod tests {
             .with_level(log::LevelFilter::Trace)
             .init();
         with_timeout! {
-            let (mut channels, pool) = setup_tcp(1, Duration::from_secs(1), new_socket);
+            let (mut channels, pool) = setup_tcp_client(1, Duration::from_secs(1), new_socket);
             task::spawn(pool.run());
 
             let farend_addr = local_addr(7005);
@@ -437,7 +440,7 @@ mod tests {
             .init();
         const INACTIVITY_TIMEOUT: Duration = sec!(2);
 
-        let (channels, pool) = setup_tcp(1, INACTIVITY_TIMEOUT, new_socket);
+        let (channels, pool) = setup_tcp_client(1, INACTIVITY_TIMEOUT, new_socket);
         task::spawn(pool.run());
 
         let farend_addr = local_addr(7006);

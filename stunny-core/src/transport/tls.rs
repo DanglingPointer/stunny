@@ -5,12 +5,12 @@ use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::{TcpSocket, TcpStream};
-use tokio_rustls::rustls::{pki_types::ServerName, ClientConfig};
-use tokio_rustls::{client::TlsStream, TlsConnector};
+use tokio::io::{split, AsyncRead, AsyncWrite};
+use tokio::net::{TcpListener, TcpSocket, TcpStream};
+use tokio_rustls::rustls::{pki_types::ServerName, ClientConfig, ServerConfig};
+use tokio_rustls::{client, server, TlsAcceptor, TlsConnector};
 
-pub fn setup_tls(
+pub fn setup_tls_client(
     max_outstanding_requests: usize,
     connection_keep_alive: Duration,
     socket_factory: impl Fn() -> io::Result<TcpSocket> + 'static,
@@ -19,35 +19,88 @@ pub fn setup_tls(
     let (channels, pool) = setup_connection_pool(
         max_outstanding_requests,
         connection_keep_alive,
-        TlsStreamFactory {
+        TlsConnectionFactory {
             tls_connector: TlsConnector::from(tls_config),
             socket_factory: Box::new(socket_factory),
         },
     );
-    (channels, TlsConnectionPool(pool))
+    (channels, TlsConnectionPool(PoolVariant::Client(pool)))
 }
 
-pub struct TlsConnectionPool(ConnectionPool<TlsStreamFactory>);
+pub fn setup_tls_server(
+    max_pending_requests: usize,
+    max_pending_connections: u32,
+    connection_keep_alive: Duration,
+    bound_socket: TcpSocket,
+    tls_config: Arc<ServerConfig>,
+) -> io::Result<(MessageChannels, TlsConnectionPool)> {
+    let listener = bound_socket.listen(max_pending_connections)?;
+    let (channels, pool) = setup_connection_pool(
+        max_pending_requests,
+        connection_keep_alive,
+        TlsConnectionAcceptor {
+            listener,
+            acceptor: TlsAcceptor::from(tls_config),
+        },
+    );
+    Ok((channels, TlsConnectionPool(PoolVariant::Server(pool))))
+}
+
+pub struct TlsConnectionPool(PoolVariant);
 
 impl TlsConnectionPool {
     pub async fn run(self) {
-        self.0.run_client().await;
+        match self.0 {
+            PoolVariant::Client(pool) => {
+                pool.run_client().await;
+            }
+            PoolVariant::Server(pool) => {
+                pool.run_server()
+                    .await
+                    .unwrap_or_else(|e| log::error!("TLS server exited with error {e}"));
+            }
+        }
     }
 }
 
-impl ConnectionStream for TlsStream<TcpStream> {
-    fn split(&mut self) -> (impl AsyncRead + Unpin, impl AsyncWrite + Unpin) {
-        tokio::io::split(self)
+enum PoolVariant {
+    Client(ConnectionPool<TlsConnectionFactory>),
+    Server(ConnectionPool<TlsConnectionAcceptor>),
+}
+
+// ----------------------------------------------
+
+impl ConnectionStream for client::TlsStream<TcpStream> {
+    fn split(
+        &mut self,
+    ) -> (
+        impl AsyncRead + Send + Unpin,
+        impl AsyncWrite + Send + Unpin,
+    ) {
+        split(self)
     }
 }
 
-struct TlsStreamFactory {
+impl ConnectionStream for server::TlsStream<TcpStream> {
+    fn split(
+        &mut self,
+    ) -> (
+        impl AsyncRead + Send + Unpin,
+        impl AsyncWrite + Send + Unpin,
+    ) {
+        split(self)
+    }
+}
+
+// ----------------------------------------------
+
+struct TlsConnectionFactory {
     tls_connector: TlsConnector,
     socket_factory: Box<dyn Fn() -> io::Result<TcpSocket>>,
 }
 
-impl ConnectionFactory for TlsStreamFactory {
-    type Connection = TlsStream<TcpStream>;
+impl ConnectionFactory for TlsConnectionFactory {
+    type Connection = client::TlsStream<TcpStream>;
 
     fn new_outbound<'f>(
         &mut self,
@@ -63,5 +116,22 @@ impl ConnectionFactory for TlsStreamFactory {
                 .await?;
             Ok(stream)
         }
+    }
+}
+
+// ----------------------------------------------
+
+struct TlsConnectionAcceptor {
+    listener: TcpListener,
+    acceptor: TlsAcceptor,
+}
+
+impl ConnectionAcceptor for TlsConnectionAcceptor {
+    type Connection = server::TlsStream<TcpStream>;
+
+    async fn new_inbound(&mut self) -> io::Result<(Self::Connection, SocketAddr)> {
+        let (tcp_stream, remote_addr) = self.listener.accept().await?;
+        let tls_stream = self.acceptor.accept(tcp_stream).await?;
+        Ok((tls_stream, remote_addr))
     }
 }
