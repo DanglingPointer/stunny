@@ -7,11 +7,14 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
 
-pub fn setup_tcp(
+pub fn setup_tcp<F>(
     max_outstanding_requests: usize,
     connection_keep_alive: Duration,
-    socket_factory: impl Fn() -> io::Result<TcpSocket> + 'static,
-) -> (MessageChannels, TcpConnectionPool) {
+    socket_factory: F,
+) -> (MessageChannels, TcpConnectionPool)
+where
+    F: Fn() -> io::Result<TcpSocket> + Send + 'static,
+{
     let (channels, pool) = setup_connection_pool(
         max_outstanding_requests,
         connection_keep_alive,
@@ -64,7 +67,7 @@ enum PoolVariant {
 
 // ----------------------------------------------
 
-struct TcpConnectionFactory(Box<dyn Fn() -> io::Result<TcpSocket>>);
+struct TcpConnectionFactory(Box<dyn Fn() -> io::Result<TcpSocket> + Send>);
 
 impl ConnectionFactory for TcpConnectionFactory {
     type Connection = TcpStream;
@@ -103,6 +106,12 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::{join, net::TcpStream, task, time};
 
+    macro_rules! with_timeout {
+        ($($arg:tt)+) => {{
+            time::timeout(sec!(5), async { $($arg)+ }).await.expect("test timeout");
+        }}
+    }
+
     fn new_socket() -> io::Result<TcpSocket> {
         let socket = TcpSocket::new_v4()?;
         socket.set_nodelay(true)?;
@@ -119,7 +128,7 @@ mod tests {
 
     fn setup() -> MessageChannels {
         let (channels, pool) = setup_tcp(10, Duration::from_secs(5), new_socket);
-        task::spawn_local(pool.run());
+        task::spawn(pool.run());
         channels
     }
 
@@ -127,7 +136,7 @@ mod tests {
         let server_sock = new_socket().unwrap();
         server_sock.bind(server_addr).unwrap();
         let (channels, pool) = setup_tcp_server(10, 10, sec!(20), server_sock).unwrap();
-        task::spawn_local(pool.run());
+        task::spawn(pool.run());
         channels
     }
 
@@ -167,10 +176,10 @@ mod tests {
 
     #[tokio::test]
     async fn send_and_receive_with_single_connection() {
-        local_test! {
+        with_timeout! {
             let mut channels = setup();
             let farend_addr = local_addr(7000);
-            let accept_task = task::spawn_local(accept(farend_addr));
+            let accept_task = task::spawn(accept(farend_addr));
 
             channels
                 .egress_sink
@@ -197,7 +206,7 @@ mod tests {
 
     #[tokio::test]
     async fn serve_single_connection() {
-        local_test! {
+        with_timeout! {
             let server_addr = local_addr(8000);
             let mut channels = server_setup(server_addr);
             task::yield_now().await;
@@ -226,12 +235,12 @@ mod tests {
 
     #[tokio::test]
     async fn multiple_concurrent_connections() {
-        local_test! {
+        with_timeout! {
             let mut channels = setup();
             let farend1_addr = local_addr(7001);
             let farend2_addr = local_addr(7002);
             let accept_task =
-                task::spawn_local(async move { join!(accept(farend1_addr), accept(farend2_addr)) });
+                task::spawn(async move { join!(accept(farend1_addr), accept(farend2_addr)) });
 
             channels
                 .egress_sink
@@ -269,7 +278,7 @@ mod tests {
 
     #[tokio::test]
     async fn serve_multiple_concurrent_connections() {
-        local_test! {
+        with_timeout! {
             let server_addr = local_addr(8001);
             let mut channels = server_setup(server_addr);
             task::yield_now().await;
@@ -332,10 +341,10 @@ mod tests {
         let _ = simple_logger::SimpleLogger::new()
             .with_level(log::LevelFilter::Trace)
             .init();
-        local_test! {
+        with_timeout! {
             let channels = setup();
             let farend_addr = local_addr(7003);
-            let accept_task = task::spawn_local(accept(farend_addr));
+            let accept_task = task::spawn(accept(farend_addr));
 
             channels
                 .egress_sink
@@ -347,7 +356,7 @@ mod tests {
 
             drop(farend_sock);
             task::yield_now().await;
-            let accept_task = task::spawn_local(accept(farend_addr));
+            let accept_task = task::spawn(accept(farend_addr));
 
             channels
                 .egress_sink
@@ -364,10 +373,10 @@ mod tests {
         let _ = simple_logger::SimpleLogger::new()
             .with_level(log::LevelFilter::Trace)
             .init();
-        local_test! {
+        with_timeout! {
             let mut channels = setup();
             let farend_addr = local_addr(7004);
-            let accept_task = task::spawn_local(accept(farend_addr));
+            let accept_task = task::spawn(accept(farend_addr));
 
             channels
                 .egress_sink
@@ -381,7 +390,7 @@ mod tests {
             task::yield_now().await;
             assert!(channels.ingress_source.try_recv().is_err());
 
-            let accept_task = task::spawn_local(accept(farend_addr));
+            let accept_task = task::spawn(accept(farend_addr));
             channels
                 .egress_sink
                 .send((bind_indication_msg(), farend_addr))
@@ -397,12 +406,12 @@ mod tests {
         let _ = simple_logger::SimpleLogger::new()
             .with_level(log::LevelFilter::Trace)
             .init();
-        local_test! {
+        with_timeout! {
             let (mut channels, pool) = setup_tcp(1, Duration::from_secs(1), new_socket);
-            task::spawn_local(pool.run());
+            task::spawn(pool.run());
 
             let farend_addr = local_addr(7005);
-            let accept_task = task::spawn_local(accept(farend_addr));
+            let accept_task = task::spawn(accept(farend_addr));
 
             channels
                 .egress_sink
@@ -426,15 +435,16 @@ mod tests {
         let _ = simple_logger::SimpleLogger::new()
             .with_level(log::LevelFilter::Trace)
             .init();
-        local_test! {
-            const INACTIVITY_TIMEOUT: Duration = sec!(2);
+        const INACTIVITY_TIMEOUT: Duration = sec!(2);
 
-            let (channels, pool) = setup_tcp(1, INACTIVITY_TIMEOUT, new_socket);
-            task::spawn_local(pool.run());
+        let (channels, pool) = setup_tcp(1, INACTIVITY_TIMEOUT, new_socket);
+        task::spawn(pool.run());
 
-            let farend_addr = local_addr(7006);
-            let accept_task = task::spawn_local(accept(farend_addr));
+        let farend_addr = local_addr(7006);
+        let accept_task = task::spawn(accept(farend_addr));
+        task::yield_now().await;
 
+        with_timeout! {
             channels
                 .egress_sink
                 .send((bind_request_msg(), farend_addr))

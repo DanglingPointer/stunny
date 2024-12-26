@@ -1,10 +1,10 @@
 use super::*;
 use futures_util::{FutureExt, TryFutureExt};
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::future::{ready, Future};
 use std::io;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -45,8 +45,13 @@ pub(super) struct ConnectionPool<C> {
     connector: C,
 }
 
-pub(super) trait ConnectionStream {
-    fn split(&mut self) -> (impl AsyncRead + Unpin, impl AsyncWrite + Unpin);
+pub(super) trait ConnectionStream: Send {
+    fn split(
+        &mut self,
+    ) -> (
+        impl AsyncRead + Send + Unpin,
+        impl AsyncWrite + Send + Unpin,
+    );
 }
 
 pub(super) trait ConnectionFactory {
@@ -55,7 +60,7 @@ pub(super) trait ConnectionFactory {
     fn new_outbound<'f>(
         &mut self,
         remote_addr: SocketAddr,
-    ) -> impl Future<Output = io::Result<Self::Connection>> + 'f;
+    ) -> impl Future<Output = io::Result<Self::Connection>> + Send + 'f;
 }
 
 pub(super) trait ConnectionAcceptor {
@@ -100,7 +105,7 @@ impl<A: ConnectionAcceptor> ConnectionPool<A> {
     fn add_connection(&mut self, (connection, remote_addr): (A::Connection, SocketAddr)) {
         let (egress_sink, egress_source) = mpsc::channel(self.egress_queue_capacity);
         self.connections.insert(remote_addr, egress_sink);
-        task::spawn_local(
+        task::spawn(
             connection_task(
                 ready(Ok(connection)),
                 remote_addr,
@@ -137,7 +142,7 @@ impl<F: ConnectionFactory> ConnectionPool<F> {
             let (egress_sink, egress_source) = mpsc::channel(self.egress_queue_capacity);
             let _ = egress_sink.try_send(message);
             self.connections.insert(remote_addr, egress_sink);
-            task::spawn_local(
+            task::spawn(
                 connection_task(
                     time::timeout(IO_TIMEOUT, self.connector.new_outbound(remote_addr)).map(|r| r?),
                     remote_addr,
@@ -165,7 +170,7 @@ async fn connection_task<C: ConnectionStream>(
     let mut connection_stream = get_stream.await?;
     log::debug!("New connection to {remote_addr}");
     let (rx, tx) = connection_stream.split();
-    let last_active = Cell::new(Instant::now());
+    let last_active = LastActive::new();
     try_join!(
         process_ingress(rx, ingress_sink, remote_addr, &last_active),
         process_egress(tx, egress_source, &last_active),
@@ -181,7 +186,7 @@ async fn process_ingress(
     socket: impl AsyncRead + Unpin,
     ingress_sink: mpsc::Sender<(Message, SocketAddr)>,
     remote_addr: SocketAddr,
-    last_active: &Cell<Instant>,
+    last_active: &LastActive,
 ) -> io::Result<()> {
     let mut reader = BufReader::with_capacity(BUFFER_LEN, socket);
     let mut buffer = [0u8; BUFFER_LEN];
@@ -199,7 +204,7 @@ async fn process_ingress(
         let mut tlvs_buffer = &*tlvs_buffer;
         let attributes = Vec::decode_from(&mut tlvs_buffer)?;
 
-        last_active.set(Instant::now());
+        last_active.update();
         if let Err(e) = ingress_sink.try_send((Message { header, attributes }, remote_addr)) {
             match e {
                 mpsc::error::TrySendError::Full(_) => {
@@ -216,7 +221,7 @@ async fn process_ingress(
 async fn process_egress(
     mut socket: impl AsyncWrite + Unpin,
     mut egress_source: mpsc::Receiver<Message>,
-    last_active: &Cell<Instant>,
+    last_active: &LastActive,
 ) -> io::Result<()> {
     let mut buffer = [0u8; BUFFER_LEN];
     loop {
@@ -231,11 +236,11 @@ async fn process_egress(
 
         let encoded_bytes = BUFFER_LEN - remaining_buffer.len();
         time::timeout(IO_TIMEOUT, socket.write_all(&buffer[..encoded_bytes])).await??;
-        last_active.set(Instant::now());
+        last_active.update();
     }
 }
 
-async fn detect_inactivity(timeout: Duration, last_active: &Cell<Instant>) -> io::Result<()> {
+async fn detect_inactivity(timeout: Duration, last_active: &LastActive) -> io::Result<()> {
     loop {
         let idle_period = last_active.get().elapsed();
         if idle_period >= timeout {
@@ -245,5 +250,57 @@ async fn detect_inactivity(timeout: Duration, last_active: &Cell<Instant>) -> io
             ));
         }
         time::sleep(timeout - idle_period).await;
+    }
+}
+
+struct LastActive {
+    start: Instant,
+    ms_since_start: AtomicU64,
+}
+
+impl LastActive {
+    fn new() -> Self {
+        Self {
+            start: Instant::now(),
+            ms_since_start: AtomicU64::new(0),
+        }
+    }
+
+    fn update(&self) {
+        let elapsed_since_start = self.start.elapsed().as_millis();
+        self.ms_since_start
+            .store(elapsed_since_start as u64, Ordering::Relaxed);
+    }
+
+    fn get(&self) -> Instant {
+        self.start + Duration::from_millis(self.ms_since_start.load(Ordering::Relaxed))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use local_async_utils::sec;
+    use time::sleep;
+
+    #[tokio::test(start_paused = true)]
+    async fn last_active() {
+        let la = LastActive::new();
+        assert_eq!(la.get().elapsed(), Duration::ZERO);
+
+        sleep(sec!(3)).await;
+        assert_eq!(la.get().elapsed(), sec!(3));
+
+        la.update();
+        assert_eq!(la.get().elapsed(), Duration::ZERO);
+
+        sleep(sec!(3)).await;
+        assert_eq!(la.get().elapsed(), sec!(3));
+
+        la.update();
+        sleep(sec!(1)).await;
+        la.update();
+        sleep(sec!(1)).await;
+        assert_eq!(la.get().elapsed(), sec!(1));
     }
 }
