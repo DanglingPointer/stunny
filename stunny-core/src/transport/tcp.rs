@@ -49,7 +49,7 @@ impl TcpConnectionPool {
             PoolVariant::Server(pool) => {
                 pool.run_server()
                     .await
-                    .unwrap_or_else(|e| log::error!("TLS server exited with error {e}"));
+                    .unwrap_or_else(|e| log::error!("TCP server exited with error {e}"));
             }
         }
     }
