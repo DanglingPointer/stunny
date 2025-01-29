@@ -262,12 +262,12 @@ impl EncodeDecode for Tlv {
 
         let attribute_type = buffer.get_u16();
         let value_len = buffer.get_u16() as usize;
-        let real_value_len = ceil_mul_4!(value_len);
+        let padded_value_len = ceil_mul_4!(value_len);
 
-        if buffer.remaining() < real_value_len {
+        if buffer.remaining() < padded_value_len {
             return Err(format!(
                 "TLV length exceeds buffer size ({} > {})",
-                real_value_len,
+                padded_value_len,
                 buffer.remaining()
             )
             .into());
@@ -275,7 +275,7 @@ impl EncodeDecode for Tlv {
 
         let mut value = vec![0u8; value_len];
         buffer.copy_to_slice(&mut value);
-        buffer.advance(real_value_len - value_len);
+        buffer.advance(padded_value_len - value_len);
 
         Ok(Self {
             attribute_type,
@@ -284,9 +284,9 @@ impl EncodeDecode for Tlv {
     }
 
     fn encode_into<B: BufMut>(&self, buffer: &mut B) -> Result<(), io::Error> {
-        let real_value_len = ceil_mul_4!(self.value.len());
+        let padded_value_len = ceil_mul_4!(self.value.len());
 
-        if buffer.remaining_mut() < Self::HEADER_SIZE + real_value_len {
+        if buffer.remaining_mut() < Self::HEADER_SIZE + padded_value_len {
             return Err(io::Error::new(
                 io::ErrorKind::OutOfMemory,
                 "not enough bytes to write TLV",
@@ -296,7 +296,7 @@ impl EncodeDecode for Tlv {
         buffer.put_u16(self.attribute_type);
         buffer.put_u16(self.value.len() as u16);
         buffer.put_slice(&self.value);
-        buffer.put_bytes(0u8, real_value_len - self.value.len());
+        buffer.put_bytes(0u8, padded_value_len - self.value.len());
 
         Ok(())
     }

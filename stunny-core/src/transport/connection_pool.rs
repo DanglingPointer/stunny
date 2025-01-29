@@ -242,14 +242,14 @@ async fn process_egress(
 
 async fn detect_inactivity(timeout: Duration, last_active: &LastActive) -> io::Result<()> {
     loop {
-        let idle_period = last_active.get().elapsed();
-        if idle_period >= timeout {
+        let deadline = last_active.get() + timeout;
+        if Instant::now() >= deadline {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "inactivity timeout",
             ));
         }
-        time::sleep(timeout - idle_period).await;
+        time::sleep_until(deadline).await;
     }
 }
 
