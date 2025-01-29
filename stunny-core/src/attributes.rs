@@ -92,7 +92,7 @@ fn decode_socket_addr(
     tlv_value: Vec<u8>,
     attribute_name: &'static str,
 ) -> Result<SocketAddr, ParseError> {
-    macro_rules! parse_error {
+    macro_rules! err {
         ($what:expr) => {
             ParseError::new(attribute_name, $what)
         };
@@ -101,11 +101,11 @@ fn decode_socket_addr(
     let mut buffer = tlv_value.as_slice();
 
     if buffer.remaining() < 4 {
-        return Err(parse_error!("buffer too short"));
+        return Err(err!("buffer too short"));
     }
 
     if buffer.get_u8() != 0x00 {
-        return Err(parse_error!("incorrect prefix byte"));
+        return Err(err!("incorrect prefix byte"));
     }
 
     let family = buffer.get_u8();
@@ -114,7 +114,7 @@ fn decode_socket_addr(
     let ip = match family {
         0x01 => {
             if buffer.remaining() < 4 {
-                return Err(parse_error!("not enough bytes for IPv4 address"));
+                return Err(err!("not enough bytes for IPv4 address"));
             }
             let mut octets = [0u8; 4];
             buffer.copy_to_slice(octets.as_mut_slice());
@@ -122,17 +122,14 @@ fn decode_socket_addr(
         }
         0x02 => {
             if buffer.remaining() < 16 {
-                return Err(parse_error!("not enough bytes for IPv6 address"));
+                return Err(err!("not enough bytes for IPv6 address"));
             }
             let mut octets = [0u8; 16];
             buffer.copy_to_slice(octets.as_mut_slice());
             IpAddr::V6(Ipv6Addr::from(octets))
         }
         _ => {
-            return Err(parse_error!(format!(
-                "unexpected ip version {:#04x}",
-                family
-            )));
+            return Err(err!(format!("unexpected ip version {:#04x}", family)));
         }
     };
 
@@ -255,12 +252,44 @@ impl Attribute for ErrorCode {
     }
 }
 
+#[derive(Debug)]
+pub struct UnknownAttributes(pub Vec<u16>);
+
+impl Attribute for UnknownAttributes {
+    const ID: u16 = 0x000A;
+
+    fn encode_value(self) -> Vec<u8> {
+        let mut value = Vec::with_capacity(self.0.len() * 2);
+        for id in self.0 {
+            value.put_u16(id);
+        }
+        value
+    }
+
+    fn decode_value(tlv_value: Vec<u8>) -> Result<Self, ParseError> {
+        if tlv_value.len() % 2 != 0 {
+            return Err(ParseError::new(
+                "UNKNOWN-ATTRIBUTES",
+                format!("unexpected length {}", tlv_value.len()),
+            ));
+        }
+
+        let mut ids = Vec::with_capacity(tlv_value.len() / 2);
+        let mut buffer = tlv_value.as_slice();
+
+        while buffer.remaining() >= 2 {
+            ids.push(buffer.get_u16());
+        }
+        Ok(Self(ids))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_encode_decode_mapped_ipv4_address() {
+    fn encode_decode_mapped_ipv4_address() {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 12345);
         let tlv = MappedAddress(addr).encode_value();
         assert_eq!(tlv, vec![0, 1, 48, 57, 192, 168, 1, 1]);
@@ -270,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_decode_mapped_ipv6_address() {
+    fn encode_decode_mapped_ipv6_address() {
         let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::new(1, 2, 3, 4, 5, 6, 7, 1)), 12345);
         let tlv = MappedAddress(addr).encode_value();
         assert_eq!(
@@ -283,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_decode_software() {
+    fn encode_decode_software() {
         let software = Software("stunny".to_owned());
         let tlv = software.encode_value();
         assert_eq!(tlv, b"stunny");
@@ -293,7 +322,7 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_decode_error_code() {
+    fn encode_decode_error_code() {
         let error = ErrorCode {
             code: 400,
             reason: "FAILED".to_owned(),
@@ -315,5 +344,15 @@ mod tests {
         let decoded = ErrorCode::decode_value(tlv).unwrap();
         assert_eq!(decoded.code, 420);
         assert_eq!(decoded.reason, "");
+    }
+
+    #[test]
+    fn encode_decode_unknown_attributes() {
+        let unknown = UnknownAttributes(vec![0x0004, 0x0002, 0x0003]);
+        let tlv = unknown.encode_value();
+        assert_eq!(tlv, b"\x00\x04\x00\x02\x00\x03");
+
+        let decoded = UnknownAttributes::decode_value(tlv).unwrap();
+        assert_eq!(decoded.0, vec![0x0004, 0x0002, 0x0003]);
     }
 }
