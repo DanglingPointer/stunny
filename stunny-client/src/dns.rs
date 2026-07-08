@@ -63,7 +63,7 @@ mod tests {
             .into_iter()
             .all(|socket_addr| socket_addr.port() == 19302));
 
-        let uri = "stun:stunserver2024.stunprotocol.org";
+        let uri = "stun:stunserver.org:3478";
 
         assert!(resolve_secure_uri(uri).await.is_err());
         let addrs = resolve_uri(uri).await.unwrap();
@@ -82,7 +82,7 @@ mod tests {
             .into_iter()
             .all(|socket_addr| socket_addr.port() == 19302));
 
-        let uri = "stuns:stunserver2024.stunprotocol.org";
+        let uri = "stuns:stunserver.org:5349";
 
         assert!(resolve_uri(uri).await.is_err());
         let addrs = resolve_secure_uri(uri).await.unwrap();

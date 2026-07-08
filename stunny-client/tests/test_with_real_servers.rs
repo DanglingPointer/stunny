@@ -18,16 +18,16 @@ macro_rules! local_test {
 }
 
 const UDP_SERVERS: [&str; 4] = [
-    "stun:stunserver2024.stunprotocol.org:3478",
+    "stun:stunserver.org:3478",
     "stun:stun.l.google.com:19302",
     "stun:stun2.l.google.com:19302",
     "stun:stun4.l.google.com:19302",
 ];
 
 const TCP_SERVERS: [&str; 3] = [
-    "stun:stunserver2024.stunprotocol.org:3478",
-    "stun:stun.sipnet.net:3478",
-    "stun:stun.sipnet.ru:3478",
+    "stun:stunserver.stunprotocol.org:3478",
+    "stun:stun.voipawesome.com:3478",
+    "stun:stun.nextcloud.com:3478",
 ];
 
 async fn parse_server_addrs<'a>(

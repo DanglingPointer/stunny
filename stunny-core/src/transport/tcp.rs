@@ -104,7 +104,7 @@ mod tests {
     use super::super::testutils::*;
     use super::*;
     use futures_util::{stream, StreamExt};
-    use local_async_utils::sec;
+    use local_async_utils::prelude::*;
     use std::net::{Ipv4Addr, SocketAddrV4};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::{join, net::TcpStream, task, time};
@@ -433,12 +433,12 @@ mod tests {
         }
     }
 
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn close_idle_connection() {
         let _ = simple_logger::SimpleLogger::new()
             .with_level(log::LevelFilter::Trace)
             .init();
-        const INACTIVITY_TIMEOUT: Duration = sec!(2);
+        const INACTIVITY_TIMEOUT: Duration = millisec!(100);
 
         let (channels, pool) = setup_tcp_client(1, INACTIVITY_TIMEOUT, new_socket);
         task::spawn(pool.run());
