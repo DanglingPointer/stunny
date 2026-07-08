@@ -267,7 +267,7 @@ impl Attribute for UnknownAttributes {
     }
 
     fn decode_value(tlv_value: Vec<u8>) -> Result<Self, ParseError> {
-        if tlv_value.len() % 2 != 0 {
+        if !tlv_value.len().is_multiple_of(2) {
             return Err(ParseError::new(
                 "UNKNOWN-ATTRIBUTES",
                 format!("unexpected length {}", tlv_value.len()),

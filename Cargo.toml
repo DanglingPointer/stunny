@@ -6,12 +6,10 @@ resolver = "2"
 opt-level = 3
 
 [workspace.dependencies]
-log = "0.4.22"
-thiserror = "2.0.7"
-derive_more = { version = "1.0.0" }
-futures-util = { version = "0.3.31", default-features = false }
-local_async_utils = { git = "https://github.com/DanglingPointer/local_async_utils.git", tag = "v0.1.0", features = [
-    "tokio-time",
-] }
+log = "0.4.33"
+thiserror = "2.0.18"
+derive_more = { version = "2.1.1" }
+futures-util = { version = "0.3.32", default-features = false }
+local_async_utils = { version = "0.2.13", features = ["tokio"] }
 simple_logger = { version = "5.0.0" }
-tokio-test = "0.4.4"
+tokio-test = "0.4.5"

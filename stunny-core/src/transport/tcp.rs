@@ -118,7 +118,7 @@ mod tests {
     fn new_socket() -> io::Result<TcpSocket> {
         let socket = TcpSocket::new_v4()?;
         socket.set_nodelay(true)?;
-        socket.set_linger(Some(Duration::ZERO))?;
+        socket.set_zero_linger()?;
         socket.set_reuseaddr(true)?;
         #[cfg(not(windows))]
         socket.set_reuseport(true)?;

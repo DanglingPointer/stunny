@@ -1,6 +1,6 @@
 #![cfg(all(feature = "udp", feature = "tcp"))]
 use futures::StreamExt;
-use local_async_utils::{local_sync, millisec, sec};
+use local_async_utils::{millisec, prelude::*, sec};
 use std::collections::HashSet;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
@@ -45,7 +45,7 @@ async fn parse_server_addrs<'a>(
 async fn do_bind_request(
     request_sender: RequestSender,
     addr: SocketAddr,
-    result_sender: local_sync::channel::Sender<Result<Response, TransactionError>>,
+    result_sender: local_unbounded::Sender<Result<Response, TransactionError>>,
 ) {
     println!("Sending request to {:?}", addr);
     let result = request_sender.send_request(addr, 0x0001, vec![]).await;
@@ -69,7 +69,7 @@ async fn do_bind_request(
             ErrorCode
         );
     }
-    result_sender.send(result);
+    result_sender.send(result).unwrap();
 }
 
 fn parse_mapped_addr(mut response: Response) -> Option<SocketAddr> {
@@ -111,7 +111,7 @@ async fn send_bind_request_over_udp() {
             let _result = join!(driver.run(), processor.run());
         });
 
-        let (result_sender, result_receiver) = local_sync::channel();
+        let (result_sender, result_receiver) = local_unbounded::channel();
 
         for addr in parse_server_addrs(UDP_SERVERS).await {
             task::spawn_local(do_bind_request(
@@ -161,7 +161,7 @@ async fn send_bind_request_over_tcp() {
             let _result = join!(connection_pool.run(), processor.run());
         });
 
-        let (result_sender, result_receiver) = local_sync::channel();
+        let (result_sender, result_receiver) = local_unbounded::channel();
 
         for addr in parse_server_addrs(TCP_SERVERS).await {
             task::spawn_local(do_bind_request(
